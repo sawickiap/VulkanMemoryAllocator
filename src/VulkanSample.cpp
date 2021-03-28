@@ -25,6 +25,7 @@
 #include "SparseBindingTest.h"
 #include "Tests.h"
 #include "VmaUsage.h"
+#include "VkExtensionsFeaturesHelp.hpp"
 #include "Common.h"
 #include <atomic>
 #include <Shlwapi.h>
@@ -404,57 +405,18 @@ void VulkanUsage::Init()
         g_Allocs = &g_CpuAllocationCallbacks;
     }
 
-    uint32_t instanceLayerPropCount = 0;
-    ERR_GUARD_VULKAN( vkEnumerateInstanceLayerProperties(&instanceLayerPropCount, nullptr) );
-    std::vector<VkLayerProperties> instanceLayerProps(instanceLayerPropCount);
-    if(instanceLayerPropCount > 0)
-    {
-        ERR_GUARD_VULKAN( vkEnumerateInstanceLayerProperties(&instanceLayerPropCount, instanceLayerProps.data()) );
-    }
+    VKEFH::InstanceInitHelp instInitHelp;
+    ERR_GUARD_VULKAN(instInitHelp.EnumerateExtensions());
+    ERR_GUARD_VULKAN(instInitHelp.EnumerateLayers());
+    
+    assert(instInitHelp.IsExtensionSupported(VK_KHR_SURFACE_EXTENSION_NAME));
+    assert(instInitHelp.IsExtensionSupported(VK_KHR_WIN32_SURFACE_EXTENSION_NAME));
+    VK_EXT_debug_utils_enabled = instInitHelp.IsExtensionSupported(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
     if(g_EnableValidationLayer)
-    {
-        if(IsLayerSupported(instanceLayerProps.data(), instanceLayerProps.size(), VALIDATION_LAYER_NAME) == false)
-        {
-            wprintf(L"Layer \"%hs\" not supported.", VALIDATION_LAYER_NAME);
-            g_EnableValidationLayer = false;
-        }
-    }
-
-    uint32_t availableInstanceExtensionCount = 0;
-    ERR_GUARD_VULKAN( vkEnumerateInstanceExtensionProperties(nullptr, &availableInstanceExtensionCount, nullptr) );
-    std::vector<VkExtensionProperties> availableInstanceExtensions(availableInstanceExtensionCount);
-    if(availableInstanceExtensionCount > 0)
-    {
-        ERR_GUARD_VULKAN( vkEnumerateInstanceExtensionProperties(nullptr, &availableInstanceExtensionCount, availableInstanceExtensions.data()) );
-    }
-
-    std::vector<const char*> enabledInstanceExtensions;
-    enabledInstanceExtensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
-    enabledInstanceExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-
-    std::vector<const char*> instanceLayers;
-    if(g_EnableValidationLayer)
-    {
-        instanceLayers.push_back(VALIDATION_LAYER_NAME);
-    }
-
-    for(const auto& extensionProperties : availableInstanceExtensions)
-    {
-        if(strcmp(extensionProperties.extensionName, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == 0)
-        {
-            if(GetVulkanApiVersion() == VK_API_VERSION_1_0)
-            {   
-                enabledInstanceExtensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-                VK_KHR_get_physical_device_properties2_enabled = true;
-            }
-        }
-        else if(strcmp(extensionProperties.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0)
-        {
-            enabledInstanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-            VK_EXT_debug_utils_enabled = true;
-        }
-    }
+        g_EnableValidationLayer = instInitHelp.IsLayerSupported("VK_LAYER_KHRONOS_validation");
+    else
+        instInitHelp.EnableLayer("VK_LAYER_KHRONOS_validation", false);
 
     VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
     appInfo.pApplicationName = APP_TITLE_A;
@@ -463,12 +425,15 @@ void VulkanUsage::Init()
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.apiVersion = GetVulkanApiVersion();
 
+    instInitHelp.PrepareCreation();
+
     VkInstanceCreateInfo instInfo = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
     instInfo.pApplicationInfo = &appInfo;
-    instInfo.enabledExtensionCount = static_cast<uint32_t>(enabledInstanceExtensions.size());
-    instInfo.ppEnabledExtensionNames = enabledInstanceExtensions.data();
-    instInfo.enabledLayerCount = static_cast<uint32_t>(instanceLayers.size());
-    instInfo.ppEnabledLayerNames = instanceLayers.data();
+    instInfo.pNext = instInitHelp.GetFeaturesChain();
+    instInfo.enabledExtensionCount = instInitHelp.GetEnabledExtensionCount();
+    instInfo.ppEnabledExtensionNames = instInitHelp.GetEnabledExtensionNames();
+    instInfo.enabledLayerCount = instInitHelp.GetEnabledLayerCount();
+    instInfo.ppEnabledLayerNames = instInitHelp.GetEnabledLayerNames();
 
     wprintf(L"Vulkan API version used: ");
     switch(appInfo.apiVersion)
@@ -1762,60 +1727,23 @@ static void InitializeApplication()
     VkResult result = vkCreateWin32SurfaceKHR(g_hVulkanInstance, &surfaceInfo, g_Allocs, &g_hSurface);
     assert(result == VK_SUCCESS);
 
-    // Query for device extensions
+    VKEFH::DeviceInitHelp devInitHelp;
+    devInitHelp.GetPhysicalDeviceFeatures(g_hPhysicalDevice);
+    ERR_GUARD_VULKAN(devInitHelp.EnumerateExtensions(g_hPhysicalDevice));
 
-    uint32_t physicalDeviceExtensionPropertyCount = 0;
-    ERR_GUARD_VULKAN( vkEnumerateDeviceExtensionProperties(g_hPhysicalDevice, nullptr, &physicalDeviceExtensionPropertyCount, nullptr) );
-    std::vector<VkExtensionProperties> physicalDeviceExtensionProperties{physicalDeviceExtensionPropertyCount};
-    if(physicalDeviceExtensionPropertyCount)
-    {
-        ERR_GUARD_VULKAN( vkEnumerateDeviceExtensionProperties(
-            g_hPhysicalDevice,
-            nullptr,
-            &physicalDeviceExtensionPropertyCount,
-            physicalDeviceExtensionProperties.data()) );
-    }
+    // Assumning Vulkan 1.2 always used for simplicity...
 
-    for(uint32_t i = 0; i < physicalDeviceExtensionPropertyCount; ++i)
-    {
-        if(strcmp(physicalDeviceExtensionProperties[i].extensionName, VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME) == 0)
-        {
-            if(GetVulkanApiVersion() == VK_API_VERSION_1_0)
-            {
-                VK_KHR_get_memory_requirements2_enabled = true;
-            }
-        }
-        else if(strcmp(physicalDeviceExtensionProperties[i].extensionName, VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME) == 0)
-        {
-            if(GetVulkanApiVersion() == VK_API_VERSION_1_0)
-            {
-                VK_KHR_dedicated_allocation_enabled = true;
-            }
-        }
-        else if(strcmp(physicalDeviceExtensionProperties[i].extensionName, VK_KHR_BIND_MEMORY_2_EXTENSION_NAME) == 0)
-        {
-            if(GetVulkanApiVersion() == VK_API_VERSION_1_0)
-            {
-                VK_KHR_bind_memory2_enabled = true;
-            }
-        }
-        else if(strcmp(physicalDeviceExtensionProperties[i].extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0)
-            VK_EXT_memory_budget_enabled = true;
-        else if(strcmp(physicalDeviceExtensionProperties[i].extensionName, VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME) == 0)
-            VK_AMD_device_coherent_memory_enabled = true;
-        else if(strcmp(physicalDeviceExtensionProperties[i].extensionName, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME) == 0)
-        {
-            if(GetVulkanApiVersion() < VK_API_VERSION_1_2)
-            {
-                VK_KHR_buffer_device_address_enabled = true;
-            }
-        }
-        else if(strcmp(physicalDeviceExtensionProperties[i].extensionName, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME) == 0)
-            VK_EXT_memory_priority_enabled = true;
-    }
-
-    if(GetVulkanApiVersion() >= VK_API_VERSION_1_2)
-        VK_KHR_buffer_device_address_enabled = true; // Promoted to core Vulkan 1.2.
+    assert(devInitHelp.IsExtensionEnabled(VK_KHR_SWAPCHAIN_EXTENSION_NAME));
+    VK_EXT_memory_budget_enabled =
+        devInitHelp.IsExtensionEnabled(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    VK_AMD_device_coherent_memory_enabled =
+        devInitHelp.IsExtensionEnabled(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME) &&
+        devInitHelp.GetVkPhysicalDeviceCoherentMemoryFeaturesAMD().deviceCoherentMemory;
+    VK_EXT_memory_priority_enabled =
+        devInitHelp.IsExtensionEnabled(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME) &&
+        devInitHelp.GetVkPhysicalDeviceMemoryPriorityFeaturesEXT().memoryPriority;
+    VK_KHR_buffer_device_address_enabled =
+        devInitHelp.GetVkPhysicalDeviceBufferDeviceAddressFeaturesKHR().bufferDeviceAddress; // No extension - promoted to core Vulkan 1.2.
 
     // Query for features
 
@@ -1847,37 +1775,7 @@ static void InitializeApplication()
 
     wprintf(L"\n");
 
-    VkPhysicalDeviceFeatures2 physicalDeviceFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-    
-    VkPhysicalDeviceCoherentMemoryFeaturesAMD physicalDeviceCoherentMemoryFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COHERENT_MEMORY_FEATURES_AMD };
-    if(VK_AMD_device_coherent_memory_enabled)
-    {
-        PnextChainPushFront(&physicalDeviceFeatures, &physicalDeviceCoherentMemoryFeatures);
-    }
-    
-    VkPhysicalDeviceBufferDeviceAddressFeaturesKHR physicalDeviceBufferDeviceAddressFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR };
-    if(VK_KHR_buffer_device_address_enabled)
-    {
-        PnextChainPushFront(&physicalDeviceFeatures, &physicalDeviceBufferDeviceAddressFeatures);
-    }
-
-    VkPhysicalDeviceMemoryPriorityFeaturesEXT physicalDeviceMemoryPriorityFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT };
-    if(VK_EXT_memory_priority_enabled)
-    {
-        PnextChainPushFront(&physicalDeviceFeatures, &physicalDeviceMemoryPriorityFeatures);
-    }
-
-    vkGetPhysicalDeviceFeatures2(g_hPhysicalDevice, &physicalDeviceFeatures);
-
-    g_SparseBindingEnabled = physicalDeviceFeatures.features.sparseBinding != 0;
-
-    // The extension is supported as fake with no real support for this feature? Don't use it.
-    if(VK_AMD_device_coherent_memory_enabled && !physicalDeviceCoherentMemoryFeatures.deviceCoherentMemory)
-        VK_AMD_device_coherent_memory_enabled = false;
-    if(VK_KHR_buffer_device_address_enabled && !physicalDeviceBufferDeviceAddressFeatures.bufferDeviceAddress)
-        VK_KHR_buffer_device_address_enabled = false;
-    if(VK_EXT_memory_priority_enabled && !physicalDeviceMemoryPriorityFeatures.memoryPriority)
-        VK_EXT_memory_priority_enabled = false;
+    g_SparseBindingEnabled = devInitHelp.GetFeatures().sparseBinding != 0;
 
     // Find queue family index
 
@@ -1954,49 +1852,21 @@ static void InitializeApplication()
         ++queueCount;
     }
 
-    std::vector<const char*> enabledDeviceExtensions;
-    enabledDeviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-    if(VK_KHR_get_memory_requirements2_enabled)
-        enabledDeviceExtensions.push_back(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME);
-    if(VK_KHR_dedicated_allocation_enabled)
-        enabledDeviceExtensions.push_back(VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME);
-    if(VK_KHR_bind_memory2_enabled)
-        enabledDeviceExtensions.push_back(VK_KHR_BIND_MEMORY_2_EXTENSION_NAME);
-    if(VK_EXT_memory_budget_enabled)
-        enabledDeviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
-    if(VK_AMD_device_coherent_memory_enabled)
-        enabledDeviceExtensions.push_back(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
-    if(VK_KHR_buffer_device_address_enabled && GetVulkanApiVersion() < VK_API_VERSION_1_2)
-        enabledDeviceExtensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-    if(VK_EXT_memory_priority_enabled)
-        enabledDeviceExtensions.push_back(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
+    VkPhysicalDeviceFeatures& deviceFeatures = devInitHelp.GetFeatures();
+    deviceFeatures = {};
+    deviceFeatures.samplerAnisotropy = VK_TRUE;
+    deviceFeatures.sparseBinding = g_SparseBindingEnabled ? VK_TRUE : VK_FALSE;
 
-    VkPhysicalDeviceFeatures2 deviceFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-    deviceFeatures.features.samplerAnisotropy = VK_TRUE;
-    deviceFeatures.features.sparseBinding = g_SparseBindingEnabled ? VK_TRUE : VK_FALSE;
+    devInitHelp.EnableFeatureStruct("VkPhysicalDeviceCoherentMemoryFeaturesAMD", VK_AMD_device_coherent_memory_enabled);
+    devInitHelp.EnableFeatureStruct("VkPhysicalDeviceBufferDeviceAddressFeaturesKHR", VK_KHR_buffer_device_address_enabled);
+    devInitHelp.EnableFeatureStruct("VkPhysicalDeviceMemoryPriorityFeaturesEXT", VK_EXT_memory_priority_enabled);
 
-    if(VK_AMD_device_coherent_memory_enabled)
-    {
-        physicalDeviceCoherentMemoryFeatures.deviceCoherentMemory = VK_TRUE;
-        PnextChainPushBack(&deviceFeatures, &physicalDeviceCoherentMemoryFeatures);
-    }
-    if(VK_KHR_buffer_device_address_enabled)
-    {
-        physicalDeviceBufferDeviceAddressFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR };
-        physicalDeviceBufferDeviceAddressFeatures.bufferDeviceAddress = VK_TRUE;
-        PnextChainPushBack(&deviceFeatures, &physicalDeviceBufferDeviceAddressFeatures);
-    }
-    if(VK_EXT_memory_priority_enabled)
-    {
-        PnextChainPushBack(&deviceFeatures, &physicalDeviceMemoryPriorityFeatures);
-    }
+    devInitHelp.PrepareCreation();
 
     VkDeviceCreateInfo deviceCreateInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-    deviceCreateInfo.pNext = &deviceFeatures;
-    deviceCreateInfo.enabledLayerCount = 0;
-    deviceCreateInfo.ppEnabledLayerNames = nullptr;
-    deviceCreateInfo.enabledExtensionCount = (uint32_t)enabledDeviceExtensions.size();
-    deviceCreateInfo.ppEnabledExtensionNames = !enabledDeviceExtensions.empty() ? enabledDeviceExtensions.data() : nullptr;
+    deviceCreateInfo.pNext = devInitHelp.GetFeaturesChain();
+    deviceCreateInfo.enabledExtensionCount = devInitHelp.GetEnabledExtensionCount();
+    deviceCreateInfo.ppEnabledExtensionNames = devInitHelp.GetEnabledExtensionNames();
     deviceCreateInfo.queueCreateInfoCount = queueCount;
     deviceCreateInfo.pQueueCreateInfos = queueCreateInfo;
 
