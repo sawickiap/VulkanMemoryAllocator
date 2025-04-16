@@ -5207,6 +5207,8 @@ VmaListItem<T>* VmaRawList<T>::InsertAfter(ItemType* pItem)
     return PushFront();
 }
 
+BUG BUG BUG
+
 template<typename T>
 VmaListItem<T>* VmaRawList<T>::InsertBefore(ItemType* pItem, const T& value)
 {
