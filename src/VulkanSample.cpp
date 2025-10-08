@@ -2644,7 +2644,10 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 static void PrintLogo()
 {
-    wprintf(L"%s\n", APP_TITLE_W);
+    wprintf(L"%s using VMA %d.%d.%d\n", APP_TITLE_W,
+        VK_VERSION_MAJOR(VMA_VERSION),
+        VK_VERSION_MINOR(VMA_VERSION),
+        VK_VERSION_PATCH(VMA_VERSION));
 }
 
 static void PrintHelp()
