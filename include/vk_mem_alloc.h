@@ -15902,7 +15902,8 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForBufferInfo(
     VkResult res = VK_SUCCESS;
 
 #if VMA_KHR_MAINTENANCE4 || VMA_VULKAN_VERSION >= 1003000
-    if(funcs->vkGetDeviceBufferMemoryRequirements)
+    if (funcs->vkGetDeviceBufferMemoryRequirements &&
+        (allocator->m_UseKhrMaintenance4 || allocator->m_VulkanApiVersion >= VK_MAKE_VERSION(1, 3, 0)))
     {
         // Can query straight from VkBufferCreateInfo :)
         VkDeviceBufferMemoryRequirementsKHR devBufMemReq = {VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS_KHR};
@@ -15911,29 +15912,27 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForBufferInfo(
         VkMemoryRequirements2 memReq = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
         (*funcs->vkGetDeviceBufferMemoryRequirements)(hDev, &devBufMemReq, &memReq);
 
-        res = allocator->FindMemoryTypeIndex(
+        return allocator->FindMemoryTypeIndex(
             memReq.memoryRequirements.memoryTypeBits, pAllocationCreateInfo,
             VmaBufferImageUsage(*pBufferCreateInfo, allocator->m_UseKhrMaintenance5), pMemoryTypeIndex);
     }
-    else
 #endif // VMA_KHR_MAINTENANCE4 || VMA_VULKAN_VERSION >= 1003000
+
+    // Must create a dummy buffer to query :(
+    VkBuffer hBuffer = VK_NULL_HANDLE;
+    res = funcs->vkCreateBuffer(
+        hDev, pBufferCreateInfo, allocator->GetAllocationCallbacks(), &hBuffer);
+    if(res == VK_SUCCESS)
     {
-        // Must create a dummy buffer to query :(
-        VkBuffer hBuffer = VK_NULL_HANDLE;
-        res = funcs->vkCreateBuffer(
-            hDev, pBufferCreateInfo, allocator->GetAllocationCallbacks(), &hBuffer);
-        if(res == VK_SUCCESS)
-        {
-            VkMemoryRequirements memReq = {};
-            funcs->vkGetBufferMemoryRequirements(hDev, hBuffer, &memReq);
+        VkMemoryRequirements memReq = {};
+        funcs->vkGetBufferMemoryRequirements(hDev, hBuffer, &memReq);
 
-            res = allocator->FindMemoryTypeIndex(
-                memReq.memoryTypeBits, pAllocationCreateInfo,
-                VmaBufferImageUsage(*pBufferCreateInfo, allocator->m_UseKhrMaintenance5), pMemoryTypeIndex);
+        res = allocator->FindMemoryTypeIndex(
+            memReq.memoryTypeBits, pAllocationCreateInfo,
+            VmaBufferImageUsage(*pBufferCreateInfo, allocator->m_UseKhrMaintenance5), pMemoryTypeIndex);
 
-            funcs->vkDestroyBuffer(
-                hDev, hBuffer, allocator->GetAllocationCallbacks());
-        }
+        funcs->vkDestroyBuffer(
+            hDev, hBuffer, allocator->GetAllocationCallbacks());
     }
     return res;
 }
@@ -15954,7 +15953,8 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForImageInfo(
     VkResult res = VK_SUCCESS;
 
 #if VMA_KHR_MAINTENANCE4 || VMA_VULKAN_VERSION >= 1003000
-    if(funcs->vkGetDeviceImageMemoryRequirements)
+    if(funcs->vkGetDeviceImageMemoryRequirements &&
+        (allocator->m_UseKhrMaintenance4 || allocator->m_VulkanApiVersion >= VK_MAKE_VERSION(1, 3, 0)))
     {
         // Can query straight from VkImageCreateInfo :)
         VkDeviceImageMemoryRequirementsKHR devImgMemReq = {VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS_KHR};
@@ -15965,29 +15965,27 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForImageInfo(
         VkMemoryRequirements2 memReq = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
         (*funcs->vkGetDeviceImageMemoryRequirements)(hDev, &devImgMemReq, &memReq);
 
-        res = allocator->FindMemoryTypeIndex(
+        return allocator->FindMemoryTypeIndex(
             memReq.memoryRequirements.memoryTypeBits, pAllocationCreateInfo,
             VmaBufferImageUsage(*pImageCreateInfo), pMemoryTypeIndex);
     }
-    else
 #endif // VMA_KHR_MAINTENANCE4 || VMA_VULKAN_VERSION >= 1003000
+    
+    // Must create a dummy image to query :(
+    VkImage hImage = VK_NULL_HANDLE;
+    res = funcs->vkCreateImage(
+        hDev, pImageCreateInfo, allocator->GetAllocationCallbacks(), &hImage);
+    if(res == VK_SUCCESS)
     {
-        // Must create a dummy image to query :(
-        VkImage hImage = VK_NULL_HANDLE;
-        res = funcs->vkCreateImage(
-            hDev, pImageCreateInfo, allocator->GetAllocationCallbacks(), &hImage);
-        if(res == VK_SUCCESS)
-        {
-            VkMemoryRequirements memReq = {};
-            funcs->vkGetImageMemoryRequirements(hDev, hImage, &memReq);
+        VkMemoryRequirements memReq = {};
+        funcs->vkGetImageMemoryRequirements(hDev, hImage, &memReq);
 
-            res = allocator->FindMemoryTypeIndex(
-                memReq.memoryTypeBits, pAllocationCreateInfo,
-                VmaBufferImageUsage(*pImageCreateInfo), pMemoryTypeIndex);
+        res = allocator->FindMemoryTypeIndex(
+            memReq.memoryTypeBits, pAllocationCreateInfo,
+            VmaBufferImageUsage(*pImageCreateInfo), pMemoryTypeIndex);
 
-            funcs->vkDestroyImage(
-                hDev, hImage, allocator->GetAllocationCallbacks());
-        }
+        funcs->vkDestroyImage(
+            hDev, hImage, allocator->GetAllocationCallbacks());
     }
     return res;
 }
