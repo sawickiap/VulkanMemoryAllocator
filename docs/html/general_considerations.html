@@ -101,10 +101,6 @@ Versioning and compatibility</h1>
 Validation layer warnings</h1>
 <p>When using this library, you can meet following types of warnings issued by Vulkan validation layer. They don't necessarily indicate a bug, so you may need to just ignore them.</p>
 <ul>
-<li><em>vkBindBufferMemory(): Binding memory to buffer 0xeb8e4 but vkGetBufferMemoryRequirements() has not been called on that buffer.</em><ul>
-<li>It happens when VK_KHR_dedicated_allocation extension is enabled. <span class="tt">vkGetBufferMemoryRequirements2KHR</span> function is used instead, while validation layer seems to be unaware of it.</li>
-</ul>
-</li>
 <li><em>Mapping an image with layout VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL can result in undefined behavior if this memory is used by the device. Only GENERAL or PREINITIALIZED should be used.</em><ul>
 <li>It happens when you map a buffer or image, because the library maps entire <span class="tt">VkDeviceMemory</span> block, where different types of images and buffers may end up together, especially on GPUs with unified memory like Intel.</li>
 </ul>
