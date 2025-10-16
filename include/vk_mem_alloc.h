@@ -133,6 +133,8 @@ extern "C" {
 #include <vulkan/vulkan.h>
 #endif
 
+#define VMA_VERSION (VK_MAKE_VERSION(3, 4, 0))
+
 #if !defined(VMA_VULKAN_VERSION)
     #if defined(VK_VERSION_1_4)
         #define VMA_VULKAN_VERSION 1004000
@@ -15900,7 +15902,8 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForBufferInfo(
     VkResult res = VK_SUCCESS;
 
 #if VMA_KHR_MAINTENANCE4 || VMA_VULKAN_VERSION >= 1003000
-    if(funcs->vkGetDeviceBufferMemoryRequirements)
+    if (funcs->vkGetDeviceBufferMemoryRequirements &&
+        (allocator->m_UseKhrMaintenance4 || allocator->m_VulkanApiVersion >= VK_MAKE_VERSION(1, 3, 0)))
     {
         // Can query straight from VkBufferCreateInfo :)
         VkDeviceBufferMemoryRequirementsKHR devBufMemReq = {VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS_KHR};
@@ -15909,29 +15912,27 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForBufferInfo(
         VkMemoryRequirements2 memReq = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
         (*funcs->vkGetDeviceBufferMemoryRequirements)(hDev, &devBufMemReq, &memReq);
 
-        res = allocator->FindMemoryTypeIndex(
+        return allocator->FindMemoryTypeIndex(
             memReq.memoryRequirements.memoryTypeBits, pAllocationCreateInfo,
             VmaBufferImageUsage(*pBufferCreateInfo, allocator->m_UseKhrMaintenance5), pMemoryTypeIndex);
     }
-    else
 #endif // VMA_KHR_MAINTENANCE4 || VMA_VULKAN_VERSION >= 1003000
+
+    // Must create a dummy buffer to query :(
+    VkBuffer hBuffer = VK_NULL_HANDLE;
+    res = funcs->vkCreateBuffer(
+        hDev, pBufferCreateInfo, allocator->GetAllocationCallbacks(), &hBuffer);
+    if(res == VK_SUCCESS)
     {
-        // Must create a dummy buffer to query :(
-        VkBuffer hBuffer = VK_NULL_HANDLE;
-        res = funcs->vkCreateBuffer(
-            hDev, pBufferCreateInfo, allocator->GetAllocationCallbacks(), &hBuffer);
-        if(res == VK_SUCCESS)
-        {
-            VkMemoryRequirements memReq = {};
-            funcs->vkGetBufferMemoryRequirements(hDev, hBuffer, &memReq);
+        VkMemoryRequirements memReq = {};
+        funcs->vkGetBufferMemoryRequirements(hDev, hBuffer, &memReq);
 
-            res = allocator->FindMemoryTypeIndex(
-                memReq.memoryTypeBits, pAllocationCreateInfo,
-                VmaBufferImageUsage(*pBufferCreateInfo, allocator->m_UseKhrMaintenance5), pMemoryTypeIndex);
+        res = allocator->FindMemoryTypeIndex(
+            memReq.memoryTypeBits, pAllocationCreateInfo,
+            VmaBufferImageUsage(*pBufferCreateInfo, allocator->m_UseKhrMaintenance5), pMemoryTypeIndex);
 
-            funcs->vkDestroyBuffer(
-                hDev, hBuffer, allocator->GetAllocationCallbacks());
-        }
+        funcs->vkDestroyBuffer(
+            hDev, hBuffer, allocator->GetAllocationCallbacks());
     }
     return res;
 }
@@ -15952,7 +15953,8 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForImageInfo(
     VkResult res = VK_SUCCESS;
 
 #if VMA_KHR_MAINTENANCE4 || VMA_VULKAN_VERSION >= 1003000
-    if(funcs->vkGetDeviceImageMemoryRequirements)
+    if(funcs->vkGetDeviceImageMemoryRequirements &&
+        (allocator->m_UseKhrMaintenance4 || allocator->m_VulkanApiVersion >= VK_MAKE_VERSION(1, 3, 0)))
     {
         // Can query straight from VkImageCreateInfo :)
         VkDeviceImageMemoryRequirementsKHR devImgMemReq = {VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS_KHR};
@@ -15963,29 +15965,27 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForImageInfo(
         VkMemoryRequirements2 memReq = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
         (*funcs->vkGetDeviceImageMemoryRequirements)(hDev, &devImgMemReq, &memReq);
 
-        res = allocator->FindMemoryTypeIndex(
+        return allocator->FindMemoryTypeIndex(
             memReq.memoryRequirements.memoryTypeBits, pAllocationCreateInfo,
             VmaBufferImageUsage(*pImageCreateInfo), pMemoryTypeIndex);
     }
-    else
 #endif // VMA_KHR_MAINTENANCE4 || VMA_VULKAN_VERSION >= 1003000
+    
+    // Must create a dummy image to query :(
+    VkImage hImage = VK_NULL_HANDLE;
+    res = funcs->vkCreateImage(
+        hDev, pImageCreateInfo, allocator->GetAllocationCallbacks(), &hImage);
+    if(res == VK_SUCCESS)
     {
-        // Must create a dummy image to query :(
-        VkImage hImage = VK_NULL_HANDLE;
-        res = funcs->vkCreateImage(
-            hDev, pImageCreateInfo, allocator->GetAllocationCallbacks(), &hImage);
-        if(res == VK_SUCCESS)
-        {
-            VkMemoryRequirements memReq = {};
-            funcs->vkGetImageMemoryRequirements(hDev, hImage, &memReq);
+        VkMemoryRequirements memReq = {};
+        funcs->vkGetImageMemoryRequirements(hDev, hImage, &memReq);
 
-            res = allocator->FindMemoryTypeIndex(
-                memReq.memoryTypeBits, pAllocationCreateInfo,
-                VmaBufferImageUsage(*pImageCreateInfo), pMemoryTypeIndex);
+        res = allocator->FindMemoryTypeIndex(
+            memReq.memoryTypeBits, pAllocationCreateInfo,
+            VmaBufferImageUsage(*pImageCreateInfo), pMemoryTypeIndex);
 
-            funcs->vkDestroyImage(
-                hDev, hImage, allocator->GetAllocationCallbacks());
-        }
+        funcs->vkDestroyImage(
+            hDev, hImage, allocator->GetAllocationCallbacks());
     }
     return res;
 }
@@ -19732,9 +19732,6 @@ When using this library, you can meet following types of warnings issued by
 Vulkan validation layer. They don't necessarily indicate a bug, so you may need
 to just ignore them.
 
-- *vkBindBufferMemory(): Binding memory to buffer 0xeb8e4 but vkGetBufferMemoryRequirements() has not been called on that buffer.*
-  - It happens when VK_KHR_dedicated_allocation extension is enabled.
-    `vkGetBufferMemoryRequirements2KHR` function is used instead, while validation layer seems to be unaware of it.
 - *Mapping an image with layout VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL can result in undefined behavior if this memory is used by the device. Only GENERAL or PREINITIALIZED should be used.*
   - It happens when you map a buffer or image, because the library maps entire
     `VkDeviceMemory` block, where different types of images and buffers may end
