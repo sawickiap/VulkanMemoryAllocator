@@ -18949,7 +18949,7 @@ for the whole lifetime of the custom pool, because it will be used when the pool
 No copy is made internally. This is why variable `exportMemAllocInfo` is defined as static.
 
 If you want to export all memory allocated by VMA from certain memory types,
-also dedicated allocations or other allocations made from default pools,
+including dedicated allocations and allocations made from default pools,
 an alternative solution is to fill in VmaAllocatorCreateInfo::pTypeExternalMemoryHandleTypes.
 It should point to an array with `VkExternalMemoryHandleTypeFlagsKHR` to be automatically passed by the library
 through `VkExportMemoryAllocateInfoKHR` on each allocation made from a specific memory type.
