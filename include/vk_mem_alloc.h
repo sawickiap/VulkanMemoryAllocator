@@ -6358,7 +6358,7 @@ public:
     }
 
 private:
-    static const int32_t COUNTER_MIN_EXTRA_MAPPING = 7;
+    static constexpr int32_t COUNTER_MIN_EXTRA_MAPPING = 7;
 
     uint32_t m_MinorCounter = 0;
     uint32_t m_MajorCounter = 0;
@@ -7161,7 +7161,7 @@ public:
     bool FinishValidation(ValidationContext& ctx) const;
 
 private:
-    static const uint16_t MAX_LOW_BUFFER_IMAGE_GRANULARITY = 256;
+    static constexpr uint16_t MAX_LOW_BUFFER_IMAGE_GRANULARITY = 256;
 
     struct RegionInfo
     {
@@ -9102,11 +9102,11 @@ private:
     // According to original paper it should be preferable 4 or 5:
     // M. Masmano, I. Ripoll, A. Crespo, and J. Real "TLSF: a New Dynamic Memory Allocator for Real-Time Systems"
     // http://www.gii.upv.es/tlsf/files/ecrts04_tlsf.pdf
-    static const uint8_t SECOND_LEVEL_INDEX = 5;
-    static const uint16_t SMALL_BUFFER_SIZE = 256;
-    static const uint32_t INITIAL_BLOCK_ALLOC_COUNT = 16;
-    static const uint8_t MEMORY_CLASS_SHIFT = 7;
-    static const uint8_t MAX_MEMORY_CLASSES = 65 - MEMORY_CLASS_SHIFT;
+    static constexpr uint8_t SECOND_LEVEL_INDEX = 5;
+    static constexpr uint16_t SMALL_BUFFER_SIZE = 256;
+    static constexpr uint32_t INITIAL_BLOCK_ALLOC_COUNT = 16;
+    static constexpr uint8_t MEMORY_CLASS_SHIFT = 7;
+    static constexpr uint8_t MAX_MEMORY_CLASSES = 65 - MEMORY_CLASS_SHIFT;
 
     class Block
     {
@@ -10122,7 +10122,7 @@ public:
 
 private:
     // Max number of allocations to ignore due to size constraints before ending single pass
-    static const uint8_t MAX_ALLOCS_TO_IGNORE = 16;
+    static constexpr uint8_t MAX_ALLOCS_TO_IGNORE = 16;
     enum class CounterStatus { Pass, Ignore, End };
 
     struct FragmentedBlock
