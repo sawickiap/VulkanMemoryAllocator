@@ -3552,6 +3552,7 @@ constexpr uint32_t VMA_VENDOR_ID_AMD = 4098;
 // Vulkan 1.0, but doesn't actually define it in Vulkan SDK earlier than 1.2.131.
 // See pull request #207.
 #define VK_ERROR_UNKNOWN_COPY ((VkResult)-13)
+} // namespace
 
 
 #if VMA_STATS_STRING_ENABLED
@@ -3602,11 +3603,11 @@ enum class VmaAllocationRequestType
 
 #endif // _VMA_ENUM_DECLARATIONS
 
-} // namespace
-
 #ifndef _VMA_FORWARD_DECLARATIONS
 // Opaque handle used by allocation algorithms to identify single allocation in any conforming way.
 VK_DEFINE_NON_DISPATCHABLE_HANDLE(VmaAllocHandle);
+
+struct VmaBufferImageUsage;
 
 struct VmaMutexLock;
 struct VmaMutexLockRead;
@@ -3672,6 +3673,85 @@ class VmaAllocationObjectAllocator;
 
 #endif // _VMA_FORWARD_DECLARATIONS
 
+#ifndef _VMA_BUFFER_IMAGE_USAGE
+
+// Finds structure with s->sType == sType in mainStruct->pNext chain.
+// Returns pointer to it. If not found, returns null.
+template<typename FindT, typename MainT>
+inline const FindT* VmaPnextChainFind(const MainT* mainStruct, VkStructureType sType)
+{
+    for(const VkBaseInStructure* s = (const VkBaseInStructure*)mainStruct->pNext;
+        s != VMA_NULL; s = s->pNext)
+    {
+        if(s->sType == sType)
+        {
+            return (const FindT*)s;
+        }
+    }
+    return VMA_NULL;
+}
+
+// An abstraction over buffer or image `usage` flags, depending on available extensions.
+struct VmaBufferImageUsage
+{
+#if VMA_KHR_MAINTENANCE5
+    typedef uint64_t BaseType; // VkFlags64
+#else
+    typedef uint32_t BaseType; // VkFlags32
+#endif
+
+    static const VmaBufferImageUsage UNKNOWN;
+
+    BaseType Value;
+
+    VmaBufferImageUsage() { *this = UNKNOWN; }
+    explicit VmaBufferImageUsage(BaseType usage) : Value(usage) { }
+    VmaBufferImageUsage(const VkBufferCreateInfo &createInfo, bool useKhrMaintenance5);
+    explicit VmaBufferImageUsage(const VkImageCreateInfo &createInfo);
+
+    bool operator==(const VmaBufferImageUsage& rhs) const { return Value == rhs.Value; }
+    bool operator!=(const VmaBufferImageUsage& rhs) const { return Value != rhs.Value; }
+
+    bool Contains(BaseType flag) const { return (Value & flag) != 0; }
+    bool ContainsDeviceAccess() const
+    {
+        // This relies on values of VK_IMAGE_USAGE_TRANSFER* being the same as VK_BUFFER_IMAGE_TRANSFER*.
+        return (Value & ~BaseType(VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) != 0;
+    }
+};
+
+const VmaBufferImageUsage VmaBufferImageUsage::UNKNOWN = VmaBufferImageUsage(0);
+
+VmaBufferImageUsage::VmaBufferImageUsage(const VkBufferCreateInfo &createInfo,
+    bool useKhrMaintenance5)
+{
+#if VMA_KHR_MAINTENANCE5
+    if(useKhrMaintenance5)
+    {
+        // If VkBufferCreateInfo::pNext chain contains VkBufferUsageFlags2CreateInfoKHR,
+        // take usage from it and ignore VkBufferCreateInfo::usage, per specification
+        // of the VK_KHR_maintenance5 extension.
+        const VkBufferUsageFlags2CreateInfoKHR* const usageFlags2 =
+            VmaPnextChainFind<VkBufferUsageFlags2CreateInfoKHR>(&createInfo, VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR);
+        if(usageFlags2 != VMA_NULL)
+        {
+            this->Value = usageFlags2->usage;
+            return;
+        }
+    }
+#endif
+
+    this->Value = (BaseType)createInfo.usage;
+}
+
+VmaBufferImageUsage::VmaBufferImageUsage(const VkImageCreateInfo &createInfo)
+    : Value((BaseType)createInfo.usage)
+{
+    // Maybe in the future there will be VK_KHR_maintenanceN extension with structure
+    // VkImageUsageFlags2CreateInfoKHR, like the one for buffers...
+}
+
+#endif // _VMA_BUFFER_IMAGE_USAGE
 
 #ifndef _VMA_FUNCTIONS
 
@@ -4083,82 +4163,6 @@ inline void VmaPnextChainPushFront(MainT* mainStruct, NewT* newStruct)
 {
     newStruct->pNext = mainStruct->pNext;
     mainStruct->pNext = newStruct;
-}
-
-// Finds structure with s->sType == sType in mainStruct->pNext chain.
-// Returns pointer to it. If not found, returns null.
-template<typename FindT, typename MainT>
-inline const FindT* VmaPnextChainFind(const MainT* mainStruct, VkStructureType sType)
-{
-    for(const VkBaseInStructure* s = (const VkBaseInStructure*)mainStruct->pNext;
-        s != VMA_NULL; s = s->pNext)
-    {
-        if(s->sType == sType)
-        {
-            return (const FindT*)s;
-        }
-    }
-    return VMA_NULL;
-}
-
-// An abstraction over buffer or image `usage` flags, depending on available extensions.
-struct VmaBufferImageUsage
-{
-#if VMA_KHR_MAINTENANCE5
-    typedef uint64_t BaseType; // VkFlags64
-#else
-    typedef uint32_t BaseType; // VkFlags32
-#endif
-
-    static const VmaBufferImageUsage UNKNOWN;
-
-    BaseType Value;
-
-    VmaBufferImageUsage() { *this = UNKNOWN; }
-    explicit VmaBufferImageUsage(BaseType usage) : Value(usage) { }
-    VmaBufferImageUsage(const VkBufferCreateInfo &createInfo, bool useKhrMaintenance5);
-    explicit VmaBufferImageUsage(const VkImageCreateInfo &createInfo);
-
-    bool operator==(const VmaBufferImageUsage& rhs) const { return Value == rhs.Value; }
-    bool operator!=(const VmaBufferImageUsage& rhs) const { return Value != rhs.Value; }
-
-    bool Contains(BaseType flag) const { return (Value & flag) != 0; }
-    bool ContainsDeviceAccess() const
-    {
-        // This relies on values of VK_IMAGE_USAGE_TRANSFER* being the same as VK_BUFFER_IMAGE_TRANSFER*.
-        return (Value & ~BaseType(VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) != 0;
-    }
-};
-
-const VmaBufferImageUsage VmaBufferImageUsage::UNKNOWN = VmaBufferImageUsage(0);
-
-VmaBufferImageUsage::VmaBufferImageUsage(const VkBufferCreateInfo &createInfo,
-    bool useKhrMaintenance5)
-{
-#if VMA_KHR_MAINTENANCE5
-    if(useKhrMaintenance5)
-    {
-        // If VkBufferCreateInfo::pNext chain contains VkBufferUsageFlags2CreateInfoKHR,
-        // take usage from it and ignore VkBufferCreateInfo::usage, per specification
-        // of the VK_KHR_maintenance5 extension.
-        const VkBufferUsageFlags2CreateInfoKHR* const usageFlags2 =
-            VmaPnextChainFind<VkBufferUsageFlags2CreateInfoKHR>(&createInfo, VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR);
-        if(usageFlags2 != VMA_NULL)
-        {
-            this->Value = usageFlags2->usage;
-            return;
-        }
-    }
-#endif
-
-    this->Value = (BaseType)createInfo.usage;
-}
-
-VmaBufferImageUsage::VmaBufferImageUsage(const VkImageCreateInfo &createInfo)
-    : Value((BaseType)createInfo.usage)
-{
-    // Maybe in the future there will be VK_KHR_maintenanceN extension with structure
-    // VkImageUsageFlags2CreateInfoKHR, like the one for buffers...
 }
 
 // This is the main algorithm that guides the selection of a memory type best for an allocation -
@@ -4610,8 +4614,8 @@ struct VmaStlAllocator
     VmaStlAllocator(const VmaStlAllocator&) = default;
     VmaStlAllocator& operator=(const VmaStlAllocator&) = delete;
 
-    T* allocate(size_t n) { return VmaAllocateArray<T>(m_pCallbacks, n); }
-    void deallocate(T* p, size_t n) { VmaFree(m_pCallbacks, p); }
+    T* allocate(size_t n);
+    void deallocate(T* p, size_t n);
 
     template<typename U>
     bool operator==(const VmaStlAllocator<U>& rhs) const
@@ -4624,6 +4628,12 @@ struct VmaStlAllocator
         return m_pCallbacks != rhs.m_pCallbacks;
     }
 };
+
+template<typename T>
+T* VmaStlAllocator<T>::allocate(size_t n) { return VmaAllocateArray<T>(m_pCallbacks, n); }
+
+template<typename T>
+void VmaStlAllocator<T>::deallocate(T* p, size_t n) { VmaFree(m_pCallbacks, p); }
 #endif // _VMA_STL_ALLOCATOR
 
 #ifndef _VMA_VECTOR
@@ -4645,7 +4655,7 @@ public:
     VmaVector(size_t count, const T& value, const AllocatorT& allocator) : VmaVector(count, allocator) {}
     VmaVector(const VmaVector<T, AllocatorT>& src);
     VmaVector& operator=(const VmaVector& rhs);
-    ~VmaVector() { VmaFree(m_Allocator.m_pCallbacks, m_pArray); }
+    ~VmaVector();
 
     bool empty() const { return m_Count == 0; }
     size_t size() const { return m_Count; }
@@ -4686,6 +4696,9 @@ private:
 };
 
 #ifndef _VMA_VECTOR_FUNCTIONS
+template<typename T, typename AllocatorT>
+VmaVector<T, AllocatorT>::~VmaVector() { VmaFree(m_Allocator.m_pCallbacks, m_pArray); }
+
 template<typename T, typename AllocatorT>
 VmaVector<T, AllocatorT>::VmaVector(const AllocatorT& allocator)
     : m_Allocator(allocator),
