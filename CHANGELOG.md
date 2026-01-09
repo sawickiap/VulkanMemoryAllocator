@@ -1,3 +1,12 @@
+# 3.4.0 (2026-??-??)
+
+- Improvements for external memory export & import (#503):
+  - Added functions `vmaCreateDedicatedBuffer`, `vmaCreateDedicatedImage`, `vmaAllocateDedicatedMemory` offering extra parameter `void* pMemoryAllocateNext`.
+  - Added function `vmaGetMemoryWin32Handle2` offering extra parameter `VkExternalMemoryHandleTypeFlagBits handleType`.
+- Added `VMA_VERSION` macro with library version number (#507).
+- Fixes for compatibility with C++20 modules on Clang 21 and GCC15 (#513, #514).
+- Other fixes and improvements, including compatibility with various platforms and compilers, improvements in documentation, sample application, and tests.
+
 # 3.3.0 (2025-05-12)
 
 Additions to the library API:
