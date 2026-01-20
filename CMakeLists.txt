@@ -26,6 +26,7 @@ project(VMA VERSION 3.3.0 LANGUAGES CXX)
 
 add_library(VulkanMemoryAllocator INTERFACE)
 add_library(GPUOpen::VulkanMemoryAllocator ALIAS VulkanMemoryAllocator)
+add_library(VulkanMemoryAllocator::Headers ALIAS VulkanMemoryAllocator)
 
 target_include_directories(VulkanMemoryAllocator INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 
