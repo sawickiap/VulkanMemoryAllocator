@@ -1,5 +1,8 @@
 # 3.4.0 (2026-??-??)
 
+- Added member `VmaAllocationCreateInfo::minAlignment` (#523).
+  - Remember to always fully initialize structures with zeros and don't rely on their specific `sizeof` to ensure backward compatibility!
+  - Function `vmaCreateBufferWithAlignment` is now deprecated.
 - Improvements for external memory export & import (#503):
   - Added functions `vmaCreateDedicatedBuffer`, `vmaCreateDedicatedImage`, `vmaAllocateDedicatedMemory` offering extra parameter `void* pMemoryAllocateNext`.
   - Added function `vmaGetMemoryWin32Handle2` offering extra parameter `VkExternalMemoryHandleTypeFlagBits handleType`.

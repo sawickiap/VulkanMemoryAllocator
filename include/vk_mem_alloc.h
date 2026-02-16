@@ -1338,6 +1338,19 @@ typedef struct VmaAllocationCreateInfo
     Otherwise, it has the priority of a memory block where it is placed and this variable is ignored.
     */
     float priority;
+    /** \brief Additional minimum alignment to be used for this allocation. Can be 0.
+
+    Leave 0 (default) not to impose any additional alignment. If not 0, it must be a power of two.
+    
+    When creating a buffer or an image, specifying a custom alignment is not needed in most cases,
+    because Vulkan implementation inspects the `CreateInfo` structure (including intended usage flags)
+    and returns required alignment through functions like `vkGetBufferMemoryRequirements2`, which VMA automatically
+    uses and respects.
+    Extra alignment may be needed in some cases, like when using a buffer for acceleration structure scratch
+    (`VkPhysicalDeviceAccelerationStructurePropertiesKHR::minAccelerationStructureScratchOffsetAlignment`, see also issue #523)
+    or when doing interop with OpenGL.
+    */
+    VkDeviceSize minAlignment;
 } VmaAllocationCreateInfo;
 
 /// Describes parameter of created #VmaPool.
@@ -1381,8 +1394,14 @@ typedef struct VmaPoolCreateInfo
     /** \brief Additional minimum alignment to be used for all allocations created from this pool. Can be 0.
 
     Leave 0 (default) not to impose any additional alignment. If not 0, it must be a power of two.
-    It can be useful in cases where alignment returned by Vulkan by functions like `vkGetBufferMemoryRequirements` is not enough,
-    e.g. when doing interop with OpenGL.
+
+    When creating a buffer or an image, specifying a custom alignment is not needed in most cases,
+    because Vulkan implementation inspects the `CreateInfo` structure (including intended usage flags)
+    and returns required alignment through functions like `vkGetBufferMemoryRequirements2`, which VMA automatically
+    uses and respects.
+    Extra alignment may be needed in some cases, like when using a buffer for acceleration structure scratch
+    (`VkPhysicalDeviceAccelerationStructurePropertiesKHR::minAccelerationStructureScratchOffsetAlignment`, see also issue #523)
+    or when doing interop with OpenGL.
     */
     VkDeviceSize minAllocationAlignment;
     /** \brief Additional `pNext` chain to be attached to `VkMemoryAllocateInfo` used for every allocation made by this pool. Optional.
@@ -2667,9 +2686,8 @@ allocation for this buffer, just like when using
 although recommended as a good practice, is out of scope of this library and could be implemented
 by the user as a higher-level logic on top of VMA.
 
-There are also extended versions of this function available:
-- With additional parameter `minAlignment` - see vmaCreateBufferWithAlignment().
-- With additional parameter `pMemoryAllocateNext` - see vmaCreateDedicatedBuffer().
+There is also an extended versions of this function available with additional parameter `pMemoryAllocateNext` -
+see vmaCreateDedicatedBuffer().
 */
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateBuffer(
     VmaAllocator VMA_NOT_NULL allocator,
@@ -2684,6 +2702,10 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateBuffer(
 Similar to vmaCreateBuffer() but provides additional parameter `minAlignment` which allows to specify custom,
 minimum alignment to be used when placing the buffer inside a larger memory block, which may be needed e.g.
 for interop with OpenGL.
+
+\deprecated
+This function in obsolete since new VmaAllocationCreateInfo::minAlignment member allows specifying custom
+alignment while using any allocation function, like the standard vmaCreateBuffer().
 */
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateBufferWithAlignment(
     VmaAllocator VMA_NOT_NULL allocator,
@@ -10597,7 +10619,6 @@ public:
     VkResult CreateBuffer(
         const VkBufferCreateInfo* pBufferCreateInfo,
         const VmaAllocationCreateInfo* pAllocationCreateInfo,
-        VkDeviceSize minAlignment,
         void* pMemoryAllocateNext, // pNext chain for VkMemoryAllocateInfo.
         VkBuffer* pBuffer,
         VmaAllocation* pAllocation,
@@ -10613,7 +10634,7 @@ public:
 
     // Main allocation function.
     VkResult AllocateMemory(
-        const VkMemoryRequirements& vkMemReq,
+        VkMemoryRequirements vkMemReq,
         bool requiresDedicatedAllocation,
         bool prefersDedicatedAllocation,
         VkBuffer dedicatedBuffer,
@@ -14298,7 +14319,6 @@ VkResult VmaAllocator_T::CalcAllocationParams(
 VkResult VmaAllocator_T::CreateBuffer(
     const VkBufferCreateInfo* pBufferCreateInfo,
     const VmaAllocationCreateInfo* pAllocationCreateInfo,
-    VkDeviceSize minAlignment,
     void* pMemoryAllocateNext,
     VkBuffer* pBuffer,
     VmaAllocation* pAllocation,
@@ -14329,9 +14349,6 @@ VkResult VmaAllocator_T::CreateBuffer(
         bool prefersDedicatedAllocation = false;
         GetBufferMemoryRequirements(*pBuffer, vkMemReq,
             requiresDedicatedAllocation, prefersDedicatedAllocation);
-
-        // 2a. Include minAlignment
-        vkMemReq.alignment = VMA_MAX(vkMemReq.alignment, minAlignment);
 
         // 3. Allocate memory using allocator.
         res = AllocateMemory(
@@ -14461,7 +14478,7 @@ VkResult VmaAllocator_T::CreateImage(
 }
 
 VkResult VmaAllocator_T::AllocateMemory(
-    const VkMemoryRequirements& vkMemReq,
+    VkMemoryRequirements vkMemReq,
     bool requiresDedicatedAllocation,
     bool prefersDedicatedAllocation,
     VkBuffer dedicatedBuffer,
@@ -14476,6 +14493,7 @@ VkResult VmaAllocator_T::AllocateMemory(
 {
     memset(pAllocations, 0, sizeof(VmaAllocation) * allocationCount);
 
+    vkMemReq.alignment = VMA_MAX(vkMemReq.alignment, createInfo.minAlignment);
     VMA_ASSERT(VmaIsPow2(vkMemReq.alignment));
 
     // If using custom pNext chain for VkMemoryAllocateInfo, must require dedicated allocations.
@@ -16725,7 +16743,6 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateBuffer(
     VMA_DEBUG_GLOBAL_MUTEX_LOCK;
 
     return allocator->CreateBuffer(pBufferCreateInfo, pAllocationCreateInfo,
-        1, // minAlignment
         VMA_NULL, // pMemoryAllocateNext
         pBuffer, pAllocation, pAllocationInfo);
 
@@ -16744,8 +16761,10 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateBufferWithAlignment(
     VMA_DEBUG_LOG("vmaCreateBufferWithAlignment");
     VMA_DEBUG_GLOBAL_MUTEX_LOCK;
 
-    return allocator->CreateBuffer(pBufferCreateInfo, pAllocationCreateInfo,
-        minAlignment, // minAlignment
+    VmaAllocationCreateInfo allocCreateInfoCopy = *pAllocationCreateInfo;
+    allocCreateInfoCopy.minAlignment = VMA_MAX(allocCreateInfoCopy.minAlignment, minAlignment);
+
+    return allocator->CreateBuffer(pBufferCreateInfo, &allocCreateInfoCopy,
         VMA_NULL, // pMemoryAllocateNext
         pBuffer, pAllocation, pAllocationInfo);
 }
@@ -16767,7 +16786,6 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateDedicatedBuffer(
     allocCreateInfoCopy.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
     return allocator->CreateBuffer(pBufferCreateInfo, &allocCreateInfoCopy,
-        1, // minAlignment
         pMemoryAllocateNext, // pMemoryAllocateNext
         pBuffer, pAllocation, pAllocationInfo);
 }
@@ -18298,7 +18316,7 @@ Many of the common concerns can be addressed in a different way than using custo
 - If you want to select specific memory type for your allocation,
   you can set VmaAllocationCreateInfo::memoryTypeBits to `(1U << myMemoryTypeIndex)` instead.
 - If you need to create a buffer with certain minimum alignment, you can still do it
-  using default pools with dedicated function vmaCreateBufferWithAlignment().
+  using default pools by specifying VmaAllocationCreateInfo::minAlignment.
 
 
 \section linear_algorithm Linear allocation algorithm
@@ -19051,6 +19069,10 @@ vmaDestroyBuffer(g_Allocator, buf, alloc);
 If you need each allocation to have its own device memory block and start at offset 0, you can still do 
 by using #VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT flag. It works also with custom pools.
 
+Alternatively, you can use convenient functions vmaCreateDedicatedBuffer(), vmaCreateDedicatedImage() that
+always allocate dedicated memory for the buffer/image created, and also allow specifying custom `pNext` chain
+for the `VkMemoryAllocateInfo` structure.
+
 \subsection other_api_interop_exporting_exporting_win32_handle Exporting Win32 handle
 
 After the allocation is created, you can acquire a Win32 `HANDLE` to the `VkDeviceMemory` block it belongs to.
@@ -19090,8 +19112,8 @@ to be made out of this pool.
 The alignment actually used will be the maximum of this member and the alignment returned for the specific buffer or image
 from a function like `vkGetBufferMemoryRequirements`, which is called by VMA automatically.
 
-If you want to create a buffer with a specific minimum alignment out of default pools,
-you can use special function vmaCreateBufferWithAlignment(), which takes additional parameter `minAlignment`.
+If you want to create a buffer/image/allocate memory with a specific minimum alignment out of default pools,
+you can use VmaAllocationCreateInfo::minAlignment.
 
 Note the problem of alignment affects only resources placed inside bigger `VkDeviceMemory` blocks and not dedicated
 allocations, as these, by definition, always have alignment = 0 because the resource is bound to the beginning of its dedicated block.
