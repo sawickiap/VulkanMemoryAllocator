@@ -4265,8 +4265,11 @@ bool FindMemoryPreferences(
             }
             else
             {
-                // Always CPU memory.
-                outRequiredFlags |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+                if(hostAccessAllowTransferInstead)
+                    outPreferredFlags |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+                else
+                    // Always CPU memory.
+                    outRequiredFlags |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
             }
         }
         // CPU sequential write - may be CPU or host-visible GPU memory, uncached and write-combined.
@@ -4281,7 +4284,12 @@ bool FindMemoryPreferences(
             }
             else
             {
-                outRequiredFlags |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+                if(hostAccessAllowTransferInstead)
+                    outPreferredFlags |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+                else
+                    // Always CPU memory.
+                    outRequiredFlags |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+
                 // Direct GPU access, CPU sequential write (e.g. a dynamic uniform buffer updated every frame)
                 if(deviceAccess)
                 {
