@@ -7,6 +7,7 @@
   - Added functions `vmaCreateDedicatedBuffer`, `vmaCreateDedicatedImage`, `vmaAllocateDedicatedMemory` offering extra parameter `void* pMemoryAllocateNext`.
   - Added function `vmaGetMemoryWin32Handle2` offering extra parameter `VkExternalMemoryHandleTypeFlagBits handleType`.
 - Added `VMA_VERSION` macro with library version number (#507).
+- Improvements in the algorithm choosing memory type when `VMA_MEMORY_USAGE_AUTO*` is used (#520).
 - Fixes for compatibility with C++20 modules on Clang 21 and GCC15 (#513, #514).
 - Other fixes and improvements, including compatibility with various platforms and compilers, improvements in documentation, sample application, and tests.
 
