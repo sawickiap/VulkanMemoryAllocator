@@ -1,4 +1,4 @@
-# 3.4.0 (2026-??-??)
+# 3.4.0 (2026-06-05)
 
 - Added file `AGENTS.md` for agentic AI.
 - Added member `VmaAllocationCreateInfo::minAlignment` (#523).
