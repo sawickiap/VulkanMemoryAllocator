@@ -438,7 +438,8 @@ typedef enum VmaAllocatorCreateFlagBits
     VMA_ALLOCATOR_CREATE_AMD_DEVICE_COHERENT_MEMORY_BIT = 0x00000010,
     /**
     Enables usage of "buffer device address" feature, which allows you to use function
-    `vkGetBufferDeviceAddress*` to get raw GPU pointer to a buffer and pass it for usage inside a shader.
+    `vkGetBufferDeviceAddress*` to get raw GPU pointer to a buffer and use it in shaders,
+    acceleration structure operations, or device-address-based commands.
 
     You may set this flag only if you:
 
@@ -18656,6 +18657,10 @@ Whether through #VMA_ALLOCATION_CREATE_MAPPED_BIT or vmaMapMemory(), the allocat
 are mapped at their new place. Of course, pointer to the mapped data changes, so it needs to be queried
 using VmaAllocationInfo::pMappedData.
 
+If a moved buffer has a <b>device address</b> used, query its `VkDeviceAddress` again after recreating
+and binding the buffer at its new location. Update all cached addresses and
+`VkDeviceAddressRangeKHR` structures that referred to the old buffer address before using them.
+
 \note Defragmentation is not supported in custom pools created with #VMA_POOL_CREATE_LINEAR_ALGORITHM_BIT.
 
 
@@ -19831,7 +19836,8 @@ accompanying this library.
 \page enabling_buffer_device_address Enabling buffer device address
 
 Device extension VK_KHR_buffer_device_address
-allow to fetch raw GPU pointer to a buffer and pass it for usage in a shader code.
+allows fetching a raw GPU pointer to a buffer for use in shaders, acceleration structure
+operations, or device-address-based commands.
 It has been promoted to core Vulkan 1.2.
 
 If you want to use this feature in connection with VMA, follow these steps:
