@@ -2599,6 +2599,16 @@ static void HandlePossibleSizeChange()
         extraCatchCode \
     }
 
+static bool RunTest(void (*testFunction)())
+{
+    try
+    {
+        testFunction();
+        return true;
+    }
+    CATCH_PRINT_ERROR(return false;)
+}
+
 static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch(msg)
@@ -2644,21 +2654,11 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             PostMessage(hWnd, WM_CLOSE, 0, 0);
             break;
         case 'T':
-            try
-            {
-                Test();
-            }
-            CATCH_PRINT_ERROR(;)
+            RunTest(Test);
             break;
         case 'S':
             if (g_SparseBindingEnabled)
-            {
-                try
-                {
-                    TestSparseBinding();
-                }
-                CATCH_PRINT_ERROR(;)
-            }
+                RunTest(TestSparseBinding);
             else
             {
                 printf("Sparse binding not supported.\n");
@@ -2725,12 +2725,19 @@ int MainWindow()
     //PrintAllocatorStats();
 
     // Run tests and close program
+    int result = (int)ExitCode::Success;
     if(g_CommandLineParameters.m_Test)
-        Test();
+    {
+        if(!RunTest(Test))
+            result = (int)ExitCode::RuntimeError;
+    }
     if(g_CommandLineParameters.m_TestSparseBinding)
     {
         if(g_SparseBindingEnabled)
-            TestSparseBinding();
+        {
+            if(!RunTest(TestSparseBinding))
+                result = (int)ExitCode::RuntimeError;
+        }
         else
             printf("Sparse binding not supported.\n");
     }
@@ -2753,7 +2760,7 @@ int MainWindow()
             DrawFrame();
     }
 
-    return (int)msg.wParam;;
+    return result;
 }
 
 int Main2(int argc, wchar_t** argv)

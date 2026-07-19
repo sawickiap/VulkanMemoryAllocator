@@ -2252,6 +2252,285 @@ void TestDefragmentationVsMapping()
     vmaDestroyPool(g_hAllocator, pool);
 }
 
+static void TestDefragmentationConcurrentAllocations()
+{
+    wprintf(L"Test defragmentation concurrent allocations (issue #313, granularity=%llu)\n",
+        VkDeviceSize(VMA_DEBUG_MIN_BUFFER_IMAGE_GRANULARITY));
+
+    constexpr VkDeviceSize ALLOCATION_SIZE = 64 * KILOBYTE;
+    constexpr VkDeviceSize BLOCK_SIZE = 16 * ALLOCATION_SIZE;
+    constexpr uint32_t INITIAL_BLOCK_COUNT = 16;
+    constexpr uint32_t INITIAL_ALLOCATION_COUNT = INITIAL_BLOCK_COUNT * 16;
+    constexpr uint32_t WORKER_COUNT = 8;
+    constexpr size_t MAX_WORKER_ALLOCATIONS = 64;
+
+    VkBufferCreateInfo bufferInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    bufferInfo.size = ALLOCATION_SIZE;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+    VmaAllocationCreateInfo findMemoryTypeInfo = {};
+    findMemoryTypeInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+
+    VmaPoolCreateInfo poolInfo = {};
+    poolInfo.blockSize = BLOCK_SIZE;
+    poolInfo.minBlockCount = 1;
+    poolInfo.maxBlockCount = 128;
+    TEST(vmaFindMemoryTypeIndexForBufferInfo(
+        g_hAllocator, &bufferInfo, &findMemoryTypeInfo, &poolInfo.memoryTypeIndex) == VK_SUCCESS);
+
+    VmaPool pool = VK_NULL_HANDLE;
+    TEST(vmaCreatePool(g_hAllocator, &poolInfo, &pool) == VK_SUCCESS);
+
+    VkMemoryRequirements memoryRequirements = {};
+    memoryRequirements.size = ALLOCATION_SIZE;
+    memoryRequirements.alignment = 256;
+    memoryRequirements.memoryTypeBits = uint32_t(1) << poolInfo.memoryTypeIndex;
+
+    VmaAllocationCreateInfo allocationInfo = {};
+    allocationInfo.pool = pool;
+
+    std::atomic<bool> stopWorkers{ false };
+    std::atomic<bool> pauseWorkers{ true };
+    std::atomic<uint32_t> pausedWorkerCount{ 0 };
+    std::atomic<uint64_t> workerOperationCount{ 0 };
+    std::atomic<int32_t> workerError{ VK_SUCCESS };
+    std::vector<std::thread> workers;
+    workers.reserve(WORKER_COUNT);
+
+    for (uint32_t workerIndex = 0; workerIndex < WORKER_COUNT; ++workerIndex)
+    {
+        workers.emplace_back([&, workerIndex]()
+        {
+            RandomNumberGenerator random{ 0x313000u + workerIndex };
+            std::vector<VmaAllocation> allocations;
+            allocations.reserve(MAX_WORKER_ALLOCATIONS);
+            bool reportedPaused = false;
+
+            while (!stopWorkers.load())
+            {
+                if (pauseWorkers.load())
+                {
+                    for (VmaAllocation allocation : allocations)
+                        vmaFreeMemory(g_hAllocator, allocation);
+                    allocations.clear();
+
+                    if (!reportedPaused)
+                    {
+                        pausedWorkerCount.fetch_add(1);
+                        reportedPaused = true;
+                    }
+                    while (pauseWorkers.load() && !stopWorkers.load())
+                        std::this_thread::yield();
+                    if (stopWorkers.load())
+                        break;
+                    pausedWorkerCount.fetch_sub(1);
+                    reportedPaused = false;
+                    continue;
+                }
+
+                if (allocations.size() < MAX_WORKER_ALLOCATIONS &&
+                    (allocations.empty() || (random.Generate() & 1) != 0))
+                {
+                    VkMemoryRequirements localRequirements = memoryRequirements;
+                    localRequirements.size = (1 + random.Generate() % 4) * 16 * KILOBYTE;
+                    VmaAllocation allocation = VK_NULL_HANDLE;
+                    const VkResult result = vmaAllocateMemory(
+                        g_hAllocator, &localRequirements, &allocationInfo, &allocation, nullptr);
+                    if (result == VK_SUCCESS)
+                        allocations.push_back(allocation);
+                    else if (result != VK_ERROR_OUT_OF_DEVICE_MEMORY &&
+                        result != VK_ERROR_OUT_OF_HOST_MEMORY &&
+                        result != VK_ERROR_TOO_MANY_OBJECTS)
+                    {
+                        int32_t expected = VK_SUCCESS;
+                        workerError.compare_exchange_strong(expected, result);
+                    }
+                }
+                else
+                {
+                    const size_t allocationIndex = random.Generate() % allocations.size();
+                    vmaFreeMemory(g_hAllocator, allocations[allocationIndex]);
+                    allocations[allocationIndex] = allocations.back();
+                    allocations.pop_back();
+                }
+                workerOperationCount.fetch_add(1);
+            }
+
+            for (VmaAllocation allocation : allocations)
+                vmaFreeMemory(g_hAllocator, allocation);
+        });
+    }
+
+    const auto WaitForWorkerCount = [&](uint32_t expected)
+    {
+        while (pausedWorkerCount.load() != expected)
+            std::this_thread::yield();
+    };
+    const auto PauseWorkers = [&]()
+    {
+        pauseWorkers.store(true);
+        WaitForWorkerCount(WORKER_COUNT);
+    };
+    const auto ResumeWorkers = [&](uint64_t operationCount)
+    {
+        const uint64_t targetOperationCount = workerOperationCount.load() + operationCount;
+        pauseWorkers.store(false);
+        WaitForWorkerCount(0);
+        while (workerOperationCount.load() < targetOperationCount)
+            std::this_thread::yield();
+    };
+
+    WaitForWorkerCount(WORKER_COUNT);
+    bool success = workerError.load() == VK_SUCCESS;
+
+    // Exercise context construction and destruction while allocation threads mutate and sort
+    // the same block vector. This reproduces the first race reported by ThreadSanitizer.
+    wprintf(L"  Context lifetime stress...\n");
+    ResumeWorkers(256);
+    for (uint32_t contextIndex = 0; contextIndex < 300 && success; ++contextIndex)
+    {
+        VmaDefragmentationInfo defragmentationInfo = {};
+        defragmentationInfo.pool = pool;
+        defragmentationInfo.flags = VMA_DEFRAGMENTATION_FLAG_ALGORITHM_FAST_BIT;
+
+        VmaDefragmentationContext context = VK_NULL_HANDLE;
+        success = vmaBeginDefragmentation(g_hAllocator, &defragmentationInfo, &context) == VK_SUCCESS;
+        if (success)
+            vmaEndDefragmentation(g_hAllocator, context, nullptr);
+    }
+    PauseWorkers();
+    wprintf(L"  Context lifetime stress done.\n");
+
+    uint64_t totalMoves = 0;
+    uint32_t totalPasses = 0;
+    const uint32_t algorithms[] =
+    {
+        VMA_DEFRAGMENTATION_FLAG_ALGORITHM_FAST_BIT,
+        VMA_DEFRAGMENTATION_FLAG_ALGORITHM_EXTENSIVE_BIT,
+    };
+
+    // Worker allocations are drained before every pass begins. They are created only after
+    // pMoves is returned, so workers never destroy an allocation referenced by an active move.
+    for (uint32_t algorithm : algorithms)
+    {
+        for (uint32_t round = 0; round < 4 && success; ++round)
+        {
+            wprintf(L"  Algorithm=%u, round=%u...\n", algorithm, round);
+            std::vector<VmaAllocation> stableAllocations(INITIAL_ALLOCATION_COUNT, VK_NULL_HANDLE);
+            for (VmaAllocation& allocation : stableAllocations)
+            {
+                if (vmaAllocateMemory(
+                    g_hAllocator, &memoryRequirements, &allocationInfo, &allocation, nullptr) != VK_SUCCESS)
+                {
+                    success = false;
+                    break;
+                }
+            }
+
+            // Leave every initial block half full, without releasing any stable allocation
+            // that remains alive for the defragmentation context.
+            if (success)
+            {
+                for (size_t allocationIndex = 0; allocationIndex < stableAllocations.size(); allocationIndex += 2)
+                {
+                    vmaFreeMemory(g_hAllocator, stableAllocations[allocationIndex]);
+                    stableAllocations[allocationIndex] = VK_NULL_HANDLE;
+                }
+            }
+
+            VmaDefragmentationContext context = VK_NULL_HANDLE;
+            VmaDefragmentationStats statistics = {};
+            if (success)
+            {
+                VmaDefragmentationInfo defragmentationInfo = {};
+                defragmentationInfo.pool = pool;
+                defragmentationInfo.flags = algorithm;
+                defragmentationInfo.maxAllocationsPerPass = 128;
+                success = vmaBeginDefragmentation(
+                    g_hAllocator, &defragmentationInfo, &context) == VK_SUCCESS;
+            }
+
+            bool finished = false;
+            for (uint32_t passIndex = 0; passIndex < 128 && success && !finished; ++passIndex)
+            {
+                VmaDefragmentationPassMoveInfo pass = {};
+                const VkResult beginResult =
+                    vmaBeginDefragmentationPass(g_hAllocator, context, &pass);
+                if (beginResult == VK_SUCCESS)
+                {
+                    finished = true;
+                    break;
+                }
+                if (beginResult != VK_INCOMPLETE || pass.moveCount == 0)
+                {
+                    success = false;
+                    break;
+                }
+
+                // The active move list must contain only stable allocations. The worker pool
+                // is empty while the list is generated.
+                for (uint32_t moveIndex = 0; moveIndex < pass.moveCount; ++moveIndex)
+                {
+                    const VmaAllocation source = pass.pMoves[moveIndex].srcAllocation;
+                    const auto stableIt =
+                        std::find(stableAllocations.begin(), stableAllocations.end(), source);
+                    if (stableIt == stableAllocations.end())
+                    {
+                        success = false;
+                        break;
+                    }
+                    if (algorithm == VMA_DEFRAGMENTATION_FLAG_ALGORITHM_FAST_BIT &&
+                        passIndex == 0 && moveIndex == 0)
+                    {
+                        pass.pMoves[moveIndex].operation =
+                            VMA_DEFRAGMENTATION_MOVE_OPERATION_DESTROY;
+                        *stableIt = VK_NULL_HANDLE;
+                    }
+                }
+                if (!success)
+                    break;
+
+                const uint32_t moveCount = pass.moveCount;
+                ResumeWorkers(256);
+                const VkResult endResult =
+                    vmaEndDefragmentationPass(g_hAllocator, context, &pass);
+                PauseWorkers();
+
+                success = endResult == VK_INCOMPLETE || endResult == VK_SUCCESS;
+                finished = endResult == VK_SUCCESS;
+                totalMoves += moveCount;
+                ++totalPasses;
+            }
+
+            if (context != VK_NULL_HANDLE)
+                vmaEndDefragmentation(g_hAllocator, context, &statistics);
+            success = success &&
+                statistics.bytesFreed ==
+                    VkDeviceSize(statistics.deviceMemoryBlocksFreed) * BLOCK_SIZE;
+
+            for (VmaAllocation allocation : stableAllocations)
+            {
+                if (allocation != VK_NULL_HANDLE)
+                    vmaFreeMemory(g_hAllocator, allocation);
+            }
+            success = success && finished;
+        }
+    }
+
+    PauseWorkers();
+    stopWorkers.store(true);
+    pauseWorkers.store(false);
+    for (std::thread& worker : workers)
+        worker.join();
+
+    success = success && workerError.load() == VK_SUCCESS && totalMoves > 0;
+    wprintf(L"  Concurrent operations=%llu, passes=%u, moves=%llu\n",
+        workerOperationCount.load(), totalPasses, totalMoves);
+
+    vmaDestroyPool(g_hAllocator, pool);
+    TEST(success);
+}
+
 void TestDefragmentationAlgorithms()
 {
     wprintf(L"Test defragmentation algorithms\n");
@@ -8913,6 +9192,7 @@ void Test()
 
     TestDefragmentationSimple();
     TestDefragmentationVsMapping();
+    TestDefragmentationConcurrentAllocations();
     if (ConfigType >= CONFIG_TYPE_AVERAGE)
     {
         TestDefragmentationAlgorithms();
