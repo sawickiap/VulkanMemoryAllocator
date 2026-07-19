@@ -10137,7 +10137,8 @@ public:
         size_t allocationCount,
         VmaAllocation* pAllocations);
 
-    void Free(VmaAllocation hAllocation);
+    // Returns size of a memory block released as a result of this free, or 0.
+    VkDeviceSize Free(VmaAllocation hAllocation);
 
 #if VMA_STATS_STRING_ENABLED
     void PrintDetailedMap(class VmaJsonWriter& json);
@@ -11930,9 +11931,10 @@ VkResult VmaBlockVector::AllocatePage(
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 }
 
-void VmaBlockVector::Free(VmaAllocation hAllocation)
+VkDeviceSize VmaBlockVector::Free(VmaAllocation hAllocation)
 {
     VmaDeviceMemoryBlock* pBlockToDelete = VMA_NULL;
+    VkDeviceSize freedBlockSize = 0;
 
     bool budgetExceeded = false;
     {
@@ -11974,6 +11976,7 @@ void VmaBlockVector::Free(VmaAllocation hAllocation)
             if ((hadEmptyBlockBeforeFree || budgetExceeded) && canDeleteBlock)
             {
                 pBlockToDelete = pBlock;
+                freedBlockSize = pBlock->m_pMetadata->GetSize();
                 Remove(pBlock);
             }
             // else: We now have one empty block - leave it. A hysteresis to avoid allocating whole block back and forth.
@@ -11986,6 +11989,7 @@ void VmaBlockVector::Free(VmaAllocation hAllocation)
             if (pLastBlock->m_pMetadata->IsEmpty())
             {
                 pBlockToDelete = pLastBlock;
+                freedBlockSize = pLastBlock->m_pMetadata->GetSize();
                 m_Blocks.pop_back();
             }
         }
@@ -12005,6 +12009,7 @@ void VmaBlockVector::Free(VmaAllocation hAllocation)
         pBlockToDelete->Destroy(m_hAllocator);
         vma_delete(m_hAllocator, pBlockToDelete);
     }
+    return freedBlockSize;
 }
 
 VkDeviceSize VmaBlockVector::CalcMaxBlockSize() const
@@ -12420,8 +12425,7 @@ VkResult VmaDefragmentationContext_T::DefragmentPassEnd(VmaDefragmentationPassMo
     for (uint32_t i = 0; i < moveInfo.moveCount; ++i)
     {
         VmaDefragmentationMove& move = moveInfo.pMoves[i];
-        size_t prevCount = 0;
-        size_t currentCount = 0;
+        uint32_t freedBlockCount = 0;
         VkDeviceSize freedBlockSize = 0;
 
         uint32_t vectorIndex = 0;
@@ -12464,17 +12468,8 @@ VkResult VmaDefragmentationContext_T::DefragmentPassEnd(VmaDefragmentationPassMo
                     mappedBlocks.push_back({ mapCount, newMapBlock });
             }
 
-            // Scope for locks, Free have it's own lock
-            {
-                VmaMutexLockRead lock(vector->GetMutex(), vector->GetAllocator()->m_UseMutex);
-                prevCount = vector->GetBlockCount();
-                freedBlockSize = move.dstTmpAllocation->GetBlock()->m_pMetadata->GetSize();
-            }
-            vector->Free(move.dstTmpAllocation);
-            {
-                VmaMutexLockRead lock(vector->GetMutex(), vector->GetAllocator()->m_UseMutex);
-                currentCount = vector->GetBlockCount();
-            }
+            freedBlockSize = vector->Free(move.dstTmpAllocation);
+            freedBlockCount = freedBlockSize != 0 ? 1 : 0;
 
             result = VK_INCOMPLETE;
             break;
@@ -12503,29 +12498,17 @@ VkResult VmaDefragmentationContext_T::DefragmentPassEnd(VmaDefragmentationPassMo
         {
             m_PassStats.bytesMoved -= move.srcAllocation->GetSize();
             --m_PassStats.allocationsMoved;
-            // Scope for locks, Free have it's own lock
+            VkDeviceSize blockSize = vector->Free(move.srcAllocation);
+            if (blockSize != 0)
             {
-                VmaMutexLockRead lock(vector->GetMutex(), vector->GetAllocator()->m_UseMutex);
-                prevCount = vector->GetBlockCount();
-                freedBlockSize = move.srcAllocation->GetBlock()->m_pMetadata->GetSize();
+                freedBlockSize += blockSize;
+                ++freedBlockCount;
             }
-            vector->Free(move.srcAllocation);
+            blockSize = vector->Free(move.dstTmpAllocation);
+            if (blockSize != 0)
             {
-                VmaMutexLockRead lock(vector->GetMutex(), vector->GetAllocator()->m_UseMutex);
-                currentCount = vector->GetBlockCount();
-            }
-            freedBlockSize *= prevCount - currentCount;
-
-            VkDeviceSize dstBlockSize = SIZE_MAX;
-            {
-                VmaMutexLockRead lock(vector->GetMutex(), vector->GetAllocator()->m_UseMutex);
-                dstBlockSize = move.dstTmpAllocation->GetBlock()->m_pMetadata->GetSize();
-            }
-            vector->Free(move.dstTmpAllocation);
-            {
-                VmaMutexLockRead lock(vector->GetMutex(), vector->GetAllocator()->m_UseMutex);
-                freedBlockSize += dstBlockSize * (currentCount - vector->GetBlockCount());
-                currentCount = vector->GetBlockCount();
+                freedBlockSize += blockSize;
+                ++freedBlockCount;
             }
 
             result = VK_INCOMPLETE;
@@ -12535,10 +12518,9 @@ VkResult VmaDefragmentationContext_T::DefragmentPassEnd(VmaDefragmentationPassMo
             VMA_ASSERT(0);
         }
 
-        if (prevCount > currentCount)
+        if (freedBlockCount > 0)
         {
-            size_t freedBlocks = prevCount - currentCount;
-            m_PassStats.deviceMemoryBlocksFreed += static_cast<uint32_t>(freedBlocks);
+            m_PassStats.deviceMemoryBlocksFreed += freedBlockCount;
             m_PassStats.bytesFreed += freedBlockSize;
         }
 
@@ -12549,12 +12531,17 @@ VkResult VmaDefragmentationContext_T::DefragmentPassEnd(VmaDefragmentationPassMo
             StateExtensive& state = reinterpret_cast<StateExtensive*>(m_AlgorithmState)[vectorIndex];
             if (state.firstFreeBlock != SIZE_MAX)
             {
-                const size_t diff = prevCount - currentCount;
+                const size_t diff = freedBlockCount;
                 if (state.firstFreeBlock >= diff)
                 {
                     state.firstFreeBlock -= diff;
-                    if (state.firstFreeBlock != 0)
-                        state.firstFreeBlock -= vector->GetBlock(state.firstFreeBlock - 1)->m_pMetadata->IsEmpty();
+                    VmaMutexLockRead lock(vector->GetMutex(), vector->GetAllocator()->m_UseMutex);
+                    state.firstFreeBlock = VMA_MIN(state.firstFreeBlock, vector->GetBlockCount());
+                    if (state.firstFreeBlock != 0 &&
+                        vector->GetBlock(state.firstFreeBlock - 1)->m_pMetadata->IsEmpty())
+                    {
+                        --state.firstFreeBlock;
+                    }
                 }
                 else
                     state.firstFreeBlock = 0;
@@ -13011,6 +12998,11 @@ bool VmaDefragmentationContext_T::ComputeDefragmentation_Extensive(VmaBlockVecto
     VMA_ASSERT(m_AlgorithmState != VMA_NULL);
 
     StateExtensive& vectorState = reinterpret_cast<StateExtensive*>(m_AlgorithmState)[index];
+    if (vectorState.firstFreeBlock != SIZE_MAX)
+    {
+        // Other threads may have added or removed blocks between defragmentation passes.
+        vectorState.firstFreeBlock = VMA_MIN(vectorState.firstFreeBlock, vector.GetBlockCount());
+    }
 
     bool texturePresent = false;
     bool bufferPresent = false;
