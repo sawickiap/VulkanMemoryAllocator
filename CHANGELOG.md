@@ -1,3 +1,7 @@
+# 3.4.1 (TBD)
+
+- Other fixes and improvements, including compatibility with various platforms and compilers.
+
 # 3.4.0 (2026-06-05)
 
 - Added file `AGENTS.md` for agentic AI.
