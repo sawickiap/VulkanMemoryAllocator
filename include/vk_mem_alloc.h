@@ -505,8 +505,14 @@ typedef enum VmaAllocatorCreateFlagBits
     /**
     Enables usage of VK_KHR_extended_flags extension in the library.
 
-    You should set this flag if you found available and enabled this device extension,
+    You should set this flag only if you found available and enabled this device extension,
+    along with `VkPhysicalDeviceExtendedFlagsFeaturesKHR::extendedFlags == VK_TRUE`,
     while creating Vulkan device passed as VmaAllocatorCreateInfo::device.
+
+    When this flag is set, the library uses extended buffer and image flags provided via
+    `VkBufferUsageFlags2CreateInfoKHR`, `VkImageCreateFlags2CreateInfoKHR`, and
+    `VkImageUsageFlags2CreateInfoKHR`. For `VkBufferUsageFlags2CreateInfoKHR`, this flag
+    can be used as an alternative to #VMA_ALLOCATOR_CREATE_KHR_MAINTENANCE5_BIT.
     */
     VMA_ALLOCATOR_CREATE_KHR_EXTENDED_FLAGS_BIT = 0x00000400,
 
@@ -3819,6 +3825,26 @@ VmaBufferImageUsage::VmaBufferImageUsage(const VkImageCreateInfo &createInfo, bo
 #endif
 
     this->Value = (BaseType)createInfo.usage;
+}
+
+inline uint64_t VmaGetImageCreateFlags(const VkImageCreateInfo &createInfo, bool useKhrExtendedFlags)
+{
+#if VMA_KHR_EXTENDED_FLAGS
+    if(useKhrExtendedFlags)
+    {
+        // If VkImageCreateInfo::pNext chain contains VkImageCreateFlags2CreateInfoKHR,
+        // take flags from it and ignore VkImageCreateInfo::flags, per specification
+        // of the VK_KHR_extended_flags extension.
+        const VkImageCreateFlags2CreateInfoKHR* const createFlags2 =
+            VmaPnextChainFind<VkImageCreateFlags2CreateInfoKHR>(&createInfo, VK_STRUCTURE_TYPE_IMAGE_CREATE_FLAGS_2_CREATE_INFO_KHR);
+        if(createFlags2 != VMA_NULL)
+        {
+            return createFlags2->flags;
+        }
+    }
+#endif
+
+    return (uint64_t)createInfo.flags;
 }
 
 #endif // _VMA_BUFFER_IMAGE_USAGE
@@ -14459,7 +14485,8 @@ VkResult VmaAllocator_T::CreateBuffer(
     {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    if ((pBufferCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_COPY) != 0 &&
+    const VmaBufferImageUsage bufferUsage(*pBufferCreateInfo, m_UseKhrMaintenance5 || m_UseKhrExtendedFlags);
+    if (bufferUsage.Contains(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_COPY) &&
         !m_UseKhrBufferDeviceAddress)
     {
         VMA_ASSERT(0 && "Creating a buffer with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT is not valid if VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT was not used.");
@@ -14485,7 +14512,7 @@ VkResult VmaAllocator_T::CreateBuffer(
             prefersDedicatedAllocation,
             *pBuffer, // dedicatedBuffer
             VK_NULL_HANDLE, // dedicatedImage
-            VmaBufferImageUsage(*pBufferCreateInfo, m_UseKhrMaintenance5 || m_UseKhrExtendedFlags), // dedicatedBufferImageUsage
+            bufferUsage, // dedicatedBufferImageUsage
             pMemoryAllocateNext,
             *pAllocationCreateInfo,
             VMA_SUBALLOCATION_TYPE_BUFFER,
@@ -16168,7 +16195,8 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaFindMemoryTypeIndexForImageInfo(
         // Can query straight from VkImageCreateInfo :)
         VkDeviceImageMemoryRequirementsKHR devImgMemReq = {VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS_KHR};
         devImgMemReq.pCreateInfo = pImageCreateInfo;
-        VMA_ASSERT(pImageCreateInfo->tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT_COPY && (pImageCreateInfo->flags & VK_IMAGE_CREATE_DISJOINT_BIT_COPY) == 0 &&
+        VMA_ASSERT(pImageCreateInfo->tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT_COPY &&
+            (VmaGetImageCreateFlags(*pImageCreateInfo, allocator->m_UseKhrExtendedFlags) & VK_IMAGE_CREATE_DISJOINT_BIT_COPY) == 0 &&
             "Cannot use this VkImageCreateInfo with vmaFindMemoryTypeIndexForImageInfo as I don't know what to pass as VkDeviceImageMemoryRequirements::planeAspect.");
 
         VkMemoryRequirements2 memReq = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
@@ -16947,7 +16975,8 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateAliasingBuffer2(
     {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    if ((pBufferCreateInfo->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_COPY) != 0 &&
+    const VmaBufferImageUsage bufferUsage(*pBufferCreateInfo, allocator->m_UseKhrMaintenance5 || allocator->m_UseKhrExtendedFlags);
+    if (bufferUsage.Contains(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_COPY) &&
         !allocator->m_UseKhrBufferDeviceAddress)
     {
         VMA_ASSERT(0 && "Creating a buffer with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT is not valid if VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT was not used.");
@@ -17013,7 +17042,7 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateImage(
     VmaAllocationInfo* pAllocationInfo)
 {
     VMA_ASSERT(allocator && pImageCreateInfo && pAllocationCreateInfo && pImage && pAllocation);
-    VMA_ASSERT((pImageCreateInfo->flags & VK_IMAGE_CREATE_DISJOINT_BIT_COPY) == 0 &&
+    VMA_ASSERT((VmaGetImageCreateFlags(*pImageCreateInfo, allocator->m_UseKhrExtendedFlags) & VK_IMAGE_CREATE_DISJOINT_BIT_COPY) == 0 &&
         "vmaCreateImage() doesn't support disjoint multi-planar images. Please allocate memory for the planes using vmaAllocateMemory() and bind them using vmaBindImageMemory2().");
     VMA_DEBUG_LOG("vmaCreateImage");
     VMA_DEBUG_GLOBAL_MUTEX_LOCK;
@@ -17033,7 +17062,7 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaCreateDedicatedImage(
     VmaAllocationInfo* pAllocationInfo)
 {
     VMA_ASSERT(allocator && pImageCreateInfo && pAllocationCreateInfo && pImage && pAllocation);
-    VMA_ASSERT((pImageCreateInfo->flags & VK_IMAGE_CREATE_DISJOINT_BIT_COPY) == 0 &&
+    VMA_ASSERT((VmaGetImageCreateFlags(*pImageCreateInfo, allocator->m_UseKhrExtendedFlags) & VK_IMAGE_CREATE_DISJOINT_BIT_COPY) == 0 &&
         "vmaCreateDedicatedImage() doesn't support disjoint multi-planar images. Please allocate memory for the planes using vmaAllocateMemory() and bind them using vmaBindImageMemory2().");
     VMA_DEBUG_LOG("vmaCreateDedicatedImage");
     VMA_DEBUG_GLOBAL_MUTEX_LOCK;
