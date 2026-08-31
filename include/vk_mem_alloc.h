@@ -484,14 +484,28 @@ typedef enum VmaAllocatorCreateFlagBits
     Enables usage of VK_KHR_maintenance4 extension in the library.
 
     You may set this flag only if you found available and enabled this device extension,
+    along with `VkPhysicalDeviceMaintenance4FeaturesKHR::maintenance4 == VK_TRUE`,
     while creating Vulkan device passed as VmaAllocatorCreateInfo::device.
+
+    When this flag is set, the library may use `vkGetDeviceBufferMemoryRequirementsKHR`
+    and `vkGetDeviceImageMemoryRequirementsKHR`, avoiding temporary resource creation.
+
+    The flag is not needed when VmaAllocatorCreateInfo::vulkanApiVersion `>= VK_API_VERSION_1_3`,
+    because equivalent functionality is used from core Vulkan 1.3.
     */
     VMA_ALLOCATOR_CREATE_KHR_MAINTENANCE4_BIT = 0x00000080,
     /**
     Enables usage of VK_KHR_maintenance5 extension in the library.
 
-    You should set this flag if you found available and enabled this device extension,
-    while creating Vulkan device passed as VmaAllocatorCreateInfo::device.
+    You should set this flag only if the maintenance5 feature was enabled while creating
+    Vulkan device passed as VmaAllocatorCreateInfo::device, either via core Vulkan 1.4
+    with `VkPhysicalDeviceVulkan14Features::maintenance5 == VK_TRUE`, or via
+    VK_KHR_maintenance5 extension with
+    `VkPhysicalDeviceMaintenance5FeaturesKHR::maintenance5 == VK_TRUE`.
+
+    When this flag is set, the library uses extended buffer usage flags provided via
+    `VkBufferUsageFlags2CreateInfoKHR` in the `pNext` chain of `VkBufferCreateInfo`.
+    The same behavior can alternatively be enabled with #VMA_ALLOCATOR_CREATE_KHR_EXTENDED_FLAGS_BIT.
     */
     VMA_ALLOCATOR_CREATE_KHR_MAINTENANCE5_BIT = 0x00000100,
     /**
@@ -499,6 +513,10 @@ typedef enum VmaAllocatorCreateFlagBits
 
     You should set this flag if you found available and enabled this device extension,
     while creating Vulkan device passed as VmaAllocatorCreateInfo::device.
+
+    When this flag is set, the library imports `vkGetMemoryWin32HandleKHR` for use by
+    vmaGetMemoryWin32Handle() and vmaGetMemoryWin32Handle2().
+
     For more information, see \ref other_api_interop.
     */
     VMA_ALLOCATOR_CREATE_KHR_EXTERNAL_MEMORY_WIN32_BIT = 0x00000200,
