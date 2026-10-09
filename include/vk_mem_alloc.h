@@ -1754,11 +1754,9 @@ To use this function properly:
 
 -# Initialize volk and Vulkan:
    -# Call `volkInitialize()`
-   -# Create `VkInstance` object
-   -# Call `volkLoadInstance()`
-   -# Create `VkDevice` object
-   -# Call `volkLoadDevice()`
+   -# Create `VkInstance` and `VkDevice` object
 -# Fill in structure #VmaAllocatorCreateInfo, especially members:
+   - VmaAllocatorCreateInfo::instance
    - VmaAllocatorCreateInfo::device
    - VmaAllocatorCreateInfo::vulkanApiVersion
    - VmaAllocatorCreateInfo::flags - set appropriate flags for the Vulkan extensions you enabled
@@ -1792,9 +1790,9 @@ res = vmaCreateAllocator(&allocatorCreateInfo, &allocator);
 // Check res...
 \endcode
 
-Internally in this function, pointers to functions related to the entire Vulkan instance are fetched using global function definitions,
-while pointers to functions related to the Vulkan device are fetched using `volkLoadDeviceTable()` for given `pAllocatorCreateInfo->device`.
- */
+Internally in this function, pointers to functions related to the Vulkan instance and Vulkan device are fetched using
+functions `volkLoadInstanceTable()`, `volkLoadDeviceTable()` for given `pAllocatorCreateInfo->instance`, `pAllocatorCreateInfo->device`.
+*/
 VMA_CALL_PRE VkResult VMA_CALL_POST vmaImportVulkanFunctionsFromVolk(
     const VmaAllocatorCreateInfo* VMA_NOT_NULL pAllocatorCreateInfo,
     VmaVulkanFunctions* VMA_NOT_NULL pDstVulkanFunctions);
@@ -15748,12 +15746,21 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaImportVulkanFunctionsFromVolk(
     volkLoadDeviceTable(&src, pAllocatorCreateInfo->device);
 
 #define COPY_GLOBAL_TO_VMA_FUNC(volkName, vmaName) if(!pDstVulkanFunctions->vmaName) pDstVulkanFunctions->vmaName = volkName;
+
+#if VOLK_HEADER_VERSION > 335
+    VolkInstanceTable instSrc = {};
+    volkLoadInstanceTable(&instSrc, pAllocatorCreateInfo->instance);
+#define COPY_INSTANCE_TO_VMA_FUNC(volkName, vmaName) if(!pDstVulkanFunctions->vmaName) pDstVulkanFunctions->vmaName = instSrc.volkName;
+#else
+#define COPY_INSTANCE_TO_VMA_FUNC(volkName, vmaName) if(!pDstVulkanFunctions->vmaName) pDstVulkanFunctions->vmaName = volkName;
+#endif
+
 #define COPY_DEVICE_TO_VMA_FUNC(volkName, vmaName) if(!pDstVulkanFunctions->vmaName) pDstVulkanFunctions->vmaName = src.volkName;
 
     COPY_GLOBAL_TO_VMA_FUNC(vkGetInstanceProcAddr, vkGetInstanceProcAddr)
-    COPY_GLOBAL_TO_VMA_FUNC(vkGetDeviceProcAddr, vkGetDeviceProcAddr)
-    COPY_GLOBAL_TO_VMA_FUNC(vkGetPhysicalDeviceProperties, vkGetPhysicalDeviceProperties)
-    COPY_GLOBAL_TO_VMA_FUNC(vkGetPhysicalDeviceMemoryProperties, vkGetPhysicalDeviceMemoryProperties)
+    COPY_INSTANCE_TO_VMA_FUNC(vkGetDeviceProcAddr, vkGetDeviceProcAddr)
+    COPY_INSTANCE_TO_VMA_FUNC(vkGetPhysicalDeviceProperties, vkGetPhysicalDeviceProperties)
+    COPY_INSTANCE_TO_VMA_FUNC(vkGetPhysicalDeviceMemoryProperties, vkGetPhysicalDeviceMemoryProperties)
     COPY_DEVICE_TO_VMA_FUNC(vkAllocateMemory, vkAllocateMemory)
     COPY_DEVICE_TO_VMA_FUNC(vkFreeMemory, vkFreeMemory)
     COPY_DEVICE_TO_VMA_FUNC(vkMapMemory, vkMapMemory)
@@ -15772,8 +15779,8 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaImportVulkanFunctionsFromVolk(
 #if VMA_VULKAN_VERSION >= 1001000
     if (pAllocatorCreateInfo->vulkanApiVersion >= VK_MAKE_VERSION(1, 1, 0))
     {
-        COPY_GLOBAL_TO_VMA_FUNC(vkGetPhysicalDeviceMemoryProperties2, vkGetPhysicalDeviceMemoryProperties2KHR)
-        COPY_GLOBAL_TO_VMA_FUNC(vkGetPhysicalDeviceProperties2, vkGetPhysicalDeviceProperties2KHR)
+        COPY_INSTANCE_TO_VMA_FUNC(vkGetPhysicalDeviceMemoryProperties2, vkGetPhysicalDeviceMemoryProperties2KHR)
+        COPY_INSTANCE_TO_VMA_FUNC(vkGetPhysicalDeviceProperties2, vkGetPhysicalDeviceProperties2KHR)
         COPY_DEVICE_TO_VMA_FUNC(vkGetBufferMemoryRequirements2, vkGetBufferMemoryRequirements2KHR)
         COPY_DEVICE_TO_VMA_FUNC(vkGetImageMemoryRequirements2, vkGetImageMemoryRequirements2KHR)
         COPY_DEVICE_TO_VMA_FUNC(vkBindBufferMemory2, vkBindBufferMemory2KHR)
@@ -15811,8 +15818,8 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaImportVulkanFunctionsFromVolk(
 #if VMA_MEMORY_BUDGET
     if ((pAllocatorCreateInfo->flags & VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT) != 0)
     {
-        COPY_GLOBAL_TO_VMA_FUNC(vkGetPhysicalDeviceMemoryProperties2KHR, vkGetPhysicalDeviceMemoryProperties2KHR)
-        COPY_GLOBAL_TO_VMA_FUNC(vkGetPhysicalDeviceProperties2KHR, vkGetPhysicalDeviceProperties2KHR)
+        COPY_INSTANCE_TO_VMA_FUNC(vkGetPhysicalDeviceMemoryProperties2KHR, vkGetPhysicalDeviceMemoryProperties2KHR)
+        COPY_INSTANCE_TO_VMA_FUNC(vkGetPhysicalDeviceProperties2KHR, vkGetPhysicalDeviceProperties2KHR)
     }
 #endif
 #if VMA_EXTERNAL_MEMORY_WIN32
@@ -15823,6 +15830,7 @@ VMA_CALL_PRE VkResult VMA_CALL_POST vmaImportVulkanFunctionsFromVolk(
 #endif
 
 #undef COPY_DEVICE_TO_VMA_FUNC
+#undef COPY_INSTANCE_TO_VMA_FUNC
 #undef COPY_GLOBAL_TO_VMA_FUNC
 
     return VK_SUCCESS;

@@ -3889,8 +3889,7 @@ void TestHeapSizeLimit()
     VmaVulkanFunctions vulkanFunctions = {};
     vmaImportVulkanFunctionsFromVolk(&allocatorCreateInfo, &vulkanFunctions);
     allocatorCreateInfo.pVulkanFunctions = &vulkanFunctions;
-#endif
-#if VMA_DYNAMIC_VULKAN_FUNCTIONS
+#elif VMA_DYNAMIC_VULKAN_FUNCTIONS
     VmaVulkanFunctions vulkanFunctions = {};
     vulkanFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
     vulkanFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
