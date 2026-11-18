@@ -3394,6 +3394,80 @@ static void TestVirtualBlocks()
     }
 }
 
+// Regression for #553: null user data must not hide a live linear allocation.
+static void TestVirtualBlocksLinearNullUserData()
+{
+    wprintf(L"Test virtual blocks linear null user data\n");
+
+    VmaVirtualBlockCreateInfo blockCreateInfo = {};
+    blockCreateInfo.pAllocationCallbacks = g_Allocs;
+    blockCreateInfo.size = 100;
+    blockCreateInfo.flags = VMA_VIRTUAL_BLOCK_CREATE_LINEAR_ALGORITHM_BIT;
+    VmaVirtualBlock block = VK_NULL_HANDLE;
+    TEST(vmaCreateVirtualBlock(&blockCreateInfo, &block) == VK_SUCCESS);
+
+    VmaVirtualAllocationCreateInfo allocCreateInfo = {};
+    allocCreateInfo.size = 10;
+    VmaVirtualAllocation allocation = VK_NULL_HANDLE;
+    TEST(vmaVirtualAllocate(block, &allocCreateInfo, &allocation, nullptr) == VK_SUCCESS);
+
+    VmaStatistics stats = {};
+    vmaGetVirtualBlockStatistics(block, &stats);
+    VmaDetailedStatistics detailedStats = {};
+    vmaCalculateVirtualBlockStatistics(block, &detailedStats);
+    TEST(stats.allocationCount == 1);
+    TEST(stats.allocationBytes == 10);
+    TEST(detailedStats.statistics.allocationCount == 1);
+    TEST(detailedStats.statistics.allocationBytes == 10);
+
+    vmaVirtualFree(block, allocation);
+    vmaDestroyVirtualBlock(block);
+}
+
+// Regression for #553: wrapping must count allocations in both linear vectors.
+static void TestVirtualBlocksLinearRingBufferStatistics()
+{
+    wprintf(L"Test virtual blocks linear ring buffer statistics\n");
+
+    VmaVirtualBlockCreateInfo blockCreateInfo = {};
+    blockCreateInfo.pAllocationCallbacks = g_Allocs;
+    blockCreateInfo.size = 100;
+    blockCreateInfo.flags = VMA_VIRTUAL_BLOCK_CREATE_LINEAR_ALGORITHM_BIT;
+    VmaVirtualBlock block = VK_NULL_HANDLE;
+    TEST(vmaCreateVirtualBlock(&blockCreateInfo, &block) == VK_SUCCESS);
+
+    VmaVirtualAllocationCreateInfo allocCreateInfo = {};
+    allocCreateInfo.size = 40;
+    allocCreateInfo.pUserData = (void*)(uintptr_t)1;
+    VmaVirtualAllocation allocation0 = VK_NULL_HANDLE;
+    VmaVirtualAllocation allocation1 = VK_NULL_HANDLE;
+    VmaVirtualAllocation allocation2 = VK_NULL_HANDLE;
+    VkDeviceSize offset = 0;
+    TEST(vmaVirtualAllocate(block, &allocCreateInfo, &allocation0, &offset) == VK_SUCCESS);
+    TEST(offset == 0);
+    TEST(vmaVirtualAllocate(block, &allocCreateInfo, &allocation1, &offset) == VK_SUCCESS);
+    TEST(offset == 40);
+    vmaVirtualFree(block, allocation0);
+
+    // Only 20 bytes remain at the end, so this allocation must wrap around.
+    allocCreateInfo.size = 30;
+    TEST(vmaVirtualAllocate(block, &allocCreateInfo, &allocation2, &offset) == VK_SUCCESS);
+    TEST(offset == 0);
+
+    VmaStatistics stats = {};
+    vmaGetVirtualBlockStatistics(block, &stats);
+    VmaDetailedStatistics detailedStats = {};
+    vmaCalculateVirtualBlockStatistics(block, &detailedStats);
+    TEST(stats.allocationCount == 2);
+    TEST(stats.allocationBytes == 70);
+    TEST(detailedStats.statistics.allocationCount == 2);
+    TEST(detailedStats.statistics.allocationBytes == 70);
+
+    vmaVirtualFree(block, allocation1);
+    vmaVirtualFree(block, allocation2);
+    vmaDestroyVirtualBlock(block);
+}
+
 static void TestVirtualBlocksAlgorithms()
 {
     wprintf(L"Test virtual blocks algorithms\n");
@@ -8875,6 +8949,8 @@ void Test()
     TestJson();
     TestBasics();
     TestVirtualBlocks();
+    TestVirtualBlocksLinearNullUserData();
+    TestVirtualBlocksLinearRingBufferStatistics();
     TestVirtualBlocksAlgorithms();
     TestVirtualBlocksAlgorithmsBenchmark();
     TestAllocationVersusResourceSize();
