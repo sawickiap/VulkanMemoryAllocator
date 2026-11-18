@@ -44,7 +44,7 @@ Errors are reported using `VkResult` error codes returned from most functions, w
 
 Types that represent objects are opaque pointers or handles. Most important types of objects are:
 
-- `VmaAllocator` - represents the main allocator object. Creating only one per `=` and keeping it alive for the whole time when using Vulkan is recommended.
+- `VmaAllocator` - represents the main allocator object. Creating only one per `VkDevice` and keeping it alive for the whole time when using Vulkan is recommended.
 - `VmaAllocation` - represents a specific region of allocated Vulkan memory - a dedicated `VkDeviceMemory` block or a piece of a larger block. It may or may not be bound to a specific buffer/image. That memory block is managed internally by VMA.
 
 Example code:
