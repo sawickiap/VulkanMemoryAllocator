@@ -454,7 +454,7 @@ VkResult MainTest(Result& outResult, const Config& config)
             imageInfo.tiling = memReq.usage == VMA_MEMORY_USAGE_GPU_ONLY ?
                 VK_IMAGE_TILING_OPTIMAL :
                 VK_IMAGE_TILING_LINEAR;
-            imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             switch(memReq.usage)
             {
             case VMA_MEMORY_USAGE_GPU_ONLY:
@@ -1289,6 +1289,10 @@ static void CreateAllocation(AllocInfo& outAllocation)
 
     VmaAllocationInfo allocInfo;
 
+    // Image support is disabled: the mapped writes below do not provide a valid
+    // texel upload for an optimally tiled image in UNDEFINED layout. Before enabling
+    // images, implement staging uploads with layout transitions and image-data
+    // validation in ValidateAllocationData().
     const bool isBuffer = true;//(rand() & 0x1) != 0;
     const bool isLarge = (rand() % 16) == 0;
     if(isBuffer)
@@ -1324,7 +1328,7 @@ static void CreateAllocation(AllocInfo& outAllocation)
         imageInfo.arrayLayers = 1;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
         VkResult res = vmaCreateImage(g_hAllocator, &imageInfo, &vmaMemReq, &outAllocation.m_Image, &outAllocation.m_Allocation, &allocInfo);
@@ -1709,7 +1713,7 @@ static void TestJson()
     imgCreateInfo.mipLevels = 1;
     imgCreateInfo.arrayLayers = 1;
     imgCreateInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-    imgCreateInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    imgCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imgCreateInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imgCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 
@@ -2667,7 +2671,7 @@ static void TestDefragmentationIncrementalBasic()
     imageInfo.arrayLayers = 1;
     imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 
@@ -2837,7 +2841,7 @@ void TestDefragmentationIncrementalComplex()
     imageInfo.arrayLayers = 1;
     imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 
@@ -5515,7 +5519,7 @@ static void TestPool_Benchmark(
     imageTemplateInfo.arrayLayers = 1;
     imageTemplateInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageTemplateInfo.tiling = VK_IMAGE_TILING_OPTIMAL; // LINEAR if CPU memory.
-    imageTemplateInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    imageTemplateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageTemplateInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT; // TRANSFER_SRC if CPU memory.
     imageTemplateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 
@@ -5620,7 +5624,7 @@ static void TestPool_Benchmark(
         imageInfo.arrayLayers = 1;
         imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL; // LINEAR if CPU memory.
-        imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT; // TRANSFER_SRC if CPU memory.
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 
@@ -7009,7 +7013,7 @@ static void TestAllocationAliasing()
     imageInfo.arrayLayers = 1;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
 
     VmaAllocationCreateInfo allocationCreateInfo = {};

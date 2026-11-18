@@ -1,3 +1,7 @@
+# 3.5.1 (TBD)
+
+- Other minor fixes and improvements.
+
 # 3.5.0 (2026-10-26)
 
 - Added support for VK_KHR_extended_flags extension - added `VMA_ALLOCATOR_CREATE_KHR_EXTENDED_FLAGS_BIT` flag.
