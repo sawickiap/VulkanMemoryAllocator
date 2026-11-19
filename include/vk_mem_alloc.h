@@ -9290,6 +9290,12 @@ private:
         void MarkFree() { prevFree = VMA_NULL; }
         void MarkTaken() { prevFree = this; }
         bool IsFree() const { return prevFree != this; }
+        bool IsDebugMargin(VkDeviceSize debugMargin) const
+        {
+            // A debug margin is a free block immediately after a live allocation.
+            return debugMargin > 0 && size == debugMargin && IsFree() &&
+                prevPhysical != VMA_NULL && !prevPhysical->IsFree();
+        }
         void*& UserData() { VMA_HEAVY_ASSERT(!IsFree()); return userData; }
         Block*& PrevFree() { return prevFree; }
         Block*& NextFree() { VMA_HEAVY_ASSERT(IsFree()); return nextFree; }
@@ -9756,7 +9762,7 @@ void VmaBlockMetadata_TLSF::Alloc(
         Block* prevBlock = currentBlock->prevPhysical;
         VMA_ASSERT(prevBlock != VMA_NULL && "There should be no missing alignment at offset 0!");
 
-        if (prevBlock->IsFree() && prevBlock->size != debugMargin)
+        if (prevBlock->IsFree() && !prevBlock->IsDebugMargin(debugMargin))
         {
             uint32_t oldList = GetListIndex(prevBlock->size);
             prevBlock->size += missingAlignment;
@@ -9870,6 +9876,7 @@ void VmaBlockMetadata_TLSF::Free(VmaAllocHandle allocHandle)
     VkDeviceSize debugMargin = GetDebugMargin();
     if (debugMargin > 0)
     {
+        VMA_HEAVY_ASSERT(next->IsDebugMargin(debugMargin));
         RemoveFreeBlock(next);
         MergeBlock(next, block);
         block = next;
@@ -9878,7 +9885,7 @@ void VmaBlockMetadata_TLSF::Free(VmaAllocHandle allocHandle)
 
     // Try merging
     Block* prev = block->prevPhysical;
-    if (prev != VMA_NULL && prev->IsFree() && prev->size != debugMargin)
+    if (prev != VMA_NULL && prev->IsFree() && !prev->IsDebugMargin(debugMargin))
     {
         RemoveFreeBlock(prev);
         MergeBlock(block, prev);

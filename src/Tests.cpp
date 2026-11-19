@@ -4103,7 +4103,9 @@ static void TestDebugMargin()
             const bool isLast = allocIndex == BUF_COUNT - 1;
             bufInfo.size = (VkDeviceSize)(allocIndex + 1) * 256;
             // Last one will be mapped.
-            allocCreateInfo.flags = isLast ? VMA_ALLOCATION_CREATE_MAPPED_BIT : 0;
+            allocCreateInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+            if(isLast)
+                allocCreateInfo.flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
             VkResult res = vmaCreateBuffer(g_hAllocator, &bufInfo, &allocCreateInfo, &buffers[allocIndex].Buffer, &buffers[allocIndex].Allocation, &allocInfo[allocIndex]);
             TEST(res == VK_SUCCESS);
@@ -4180,6 +4182,54 @@ static void TestDebugMarginNotInVirtualAllocator()
         vmaClearVirtualBlock(block);
         vmaDestroyVirtualBlock(block);
     }
+}
+
+static void TestDebugMarginTLSFCoalescing()
+{
+    wprintf(L"Test TLSF coalescing with debug margins\n");
+
+    const VkDeviceSize margin = VMA_DEBUG_MARGIN;
+    const VkPhysicalDeviceProperties* properties = nullptr;
+    vmaGetPhysicalDeviceProperties(g_hAllocator, &properties);
+    VkDeviceSize alignment = properties->limits.nonCoherentAtomSize;
+    while (alignment <= 2 * margin)
+        alignment *= 2;
+
+    VmaAllocationCreateInfo allocCreateInfo = {};
+    VmaPoolCreateInfo poolCreateInfo = {};
+    TEST(vmaFindMemoryTypeIndex(g_hAllocator, UINT32_MAX, &allocCreateInfo, &poolCreateInfo.memoryTypeIndex) == VK_SUCCESS);
+    poolCreateInfo.flags = VMA_POOL_CREATE_IGNORE_BUFFER_IMAGE_GRANULARITY_BIT;
+    poolCreateInfo.blockSize = 4 * alignment;
+    poolCreateInfo.minBlockCount = poolCreateInfo.maxBlockCount = 1;
+
+    VmaPool pool = VK_NULL_HANDLE;
+    TEST(vmaCreatePool(g_hAllocator, &poolCreateInfo, &pool) == VK_SUCCESS);
+    allocCreateInfo.pool = pool;
+
+    // The first allocation's guard leaves an alignment gap of the same size as the guard.
+    VkMemoryRequirements requirements = {};
+    requirements.size = alignment - 2 * margin;
+    requirements.alignment = alignment;
+    VmaAllocation first = VK_NULL_HANDLE;
+    VmaAllocationInfo firstInfo = {};
+    TEST(vmaAllocateMemory(g_hAllocator, &requirements, &allocCreateInfo, &first, &firstInfo) == VK_SUCCESS);
+    TEST(firstInfo.offset == 0 && firstInfo.size == requirements.size);
+
+    VmaAllocation second = VK_NULL_HANDLE;
+    VmaAllocationInfo secondInfo = {};
+    TEST(vmaAllocateMemory(g_hAllocator, &requirements, &allocCreateInfo, &second, &secondInfo) == VK_SUCCESS);
+    TEST(secondInfo.offset == alignment);
+
+    // Free the second allocation first so TLSF must distinguish the preceding alignment gap
+    // from the still-live first allocation's guard.
+    vmaFreeMemory(g_hAllocator, second);
+    vmaFreeMemory(g_hAllocator, first);
+
+    VmaDetailedStatistics stats = {};
+    vmaCalculatePoolStatistics(g_hAllocator, pool, &stats);
+    vmaDestroyPool(g_hAllocator, pool);
+    TEST(stats.statistics.allocationCount == 0);
+    TEST(stats.unusedRangeCount == 1 && stats.unusedRangeSizeMax == poolCreateInfo.blockSize);
 }
 
 static void TestLinearAllocator()
@@ -8943,6 +8993,7 @@ void Test()
     // # Simple tests
 
 #if VMA_DEBUG_MARGIN
+    TestDebugMarginTLSFCoalescing();
     TestDebugMargin();
     TestDebugMarginNotInVirtualAllocator();
 #else
@@ -9026,7 +9077,7 @@ void Test()
     PerformCustomPoolTest(file);
 
     fclose(file);
-#endif // #if defined(VMA_DEBUG_MARGIN) && VMA_DEBUG_MARGIN > 0
+#endif // #if VMA_DEBUG_MARGIN
 
     wprintf(L"Done, all PASSED.\n");
 }

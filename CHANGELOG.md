@@ -1,6 +1,7 @@
 # 3.5.1 (TBD)
 
 - Fixed bugs in statistics calculation of virtual blocks (#553, #554).
+- Fixed a bug that could trigger an assertion in `VmaDeviceMemoryBlock::Destroy` when `VMA_DEBUG_MARGIN` was enabled (#276).
 - Other minor fixes and improvements.
 
 # 3.5.0 (2026-10-26)
